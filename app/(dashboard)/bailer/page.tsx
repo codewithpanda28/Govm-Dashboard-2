@@ -1,5 +1,6 @@
 "use client"
 
+import { Suspense } from "react"
 import { useEffect, useState } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { supabase } from "@/lib/supabase/client"
@@ -13,7 +14,8 @@ import {
 import { format } from "date-fns"
 import Link from "next/link"
 
-export default function BailerProfilePage() {
+// 🔹 Separate component that uses useSearchParams
+function BailerProfileContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const mobile = searchParams.get("mobile")
@@ -279,5 +281,26 @@ export default function BailerProfilePage() {
         </div>
       </div>
     </div>
+  )
+}
+
+// 🔹 Loading fallback component
+function BailerProfileLoading() {
+  return (
+    <div className="flex items-center justify-center min-h-screen">
+      <div className="text-center">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto"></div>
+        <p className="mt-4 text-muted-foreground">Loading bailer information...</p>
+      </div>
+    </div>
+  )
+}
+
+// 🔹 Main component with Suspense boundary
+export default function BailerProfilePage() {
+  return (
+    <Suspense fallback={<BailerProfileLoading />}>
+      <BailerProfileContent />
+    </Suspense>
   )
 }
