@@ -2,648 +2,671 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import { createClient } from '@/lib/supabase/client';
-import StatsCard from '@/components/dashboard/StatsCard';
-import ActivityFeed from '@/components/dashboard/ActivityFeed';
-import PieChart from '@/components/charts/PieChart';
-import BarChart from '@/components/charts/BarChart';
-import LineChart from '@/components/charts/LineChart';
-import DoughnutChart from '@/components/charts/DoughnutChart';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { FileText, Users, Scale, Lock, RefreshCw, TrendingUp, AlertCircle } from 'lucide-react';
-import { subDays, startOfMonth, endOfMonth, format, subMonths } from 'date-fns';
+import { Badge } from '@/components/ui/badge';
+import { 
+  FileText, Users, Scale, Lock, RefreshCw, 
+  Building, MapPin, Gavel, User, Shield,
+  Train, AlertTriangle, CheckCircle, Clock,
+  ChevronRight, BarChart3, TrendingUp,
+  Home, Activity
+} from 'lucide-react';
 import { toast } from 'sonner';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
-import { Skeleton } from '@/components/ui/skeleton';
-
-interface DashboardFilters {
-  dateRange: string;
-}
 
 export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [filters, setFilters] = useState<DashboardFilters>({
-    dateRange: '30',
-  });
+  const [lastUpdated, setLastUpdated] = useState<string>('');
+  
   const [stats, setStats] = useState({
+    totalDistricts: 0,
+    totalThanas: 0,
     totalFirs: 0,
     totalAccused: 0,
-    bailCases: 0,
-    custodyCases: 0,
-    firChange: 0,
+    totalBailers: 0,
+    totalBailed: 0,
+    totalCustody: 0,
   });
-  const [districtData, setDistrictData] = useState<{ labels: string[]; values: number[] }>({
-    labels: [],
-    values: [],
-  });
-  const [modusOperandiData, setModusOperandiData] = useState<{
-    labels: string[];
-    values: number[];
-  }>({ labels: [], values: [] });
-  const [monthlyTrend, setMonthlyTrend] = useState<{
-    labels: string[];
-    datasets: { label: string; data: number[]; color?: string }[];
-  }>({ labels: [], datasets: [] });
-  const [ageGroupData, setAgeGroupData] = useState<{ labels: string[]; values: number[] }>({
-    labels: [],
-    values: [],
-  });
-  const [stationPerformance, setStationPerformance] = useState<any[]>([]);
-  const [activities, setActivities] = useState<any[]>([]);
-  const supabase = createClient();
 
-  const getDateRange = useCallback(() => {
-    const now = new Date();
-    switch (filters.dateRange) {
-      case 'today':
-        return { start: new Date(now.setHours(0, 0, 0, 0)), end: new Date() };
-      case '7':
-        return { start: subDays(now, 7), end: now };
-      case '30':
-        return { start: subDays(now, 30), end: now };
-      case 'month':
-        return { start: startOfMonth(now), end: endOfMonth(now) };
-      default:
-        return { start: subDays(now, 30), end: now };
-    }
-  }, [filters.dateRange]);
+  const [topDistricts, setTopDistricts] = useState<{name: string; count: number}[]>([]);
+  const [topThanas, setTopThanas] = useState<{name: string; count: number}[]>([]);
+  const [recentFirs, setRecentFirs] = useState<any[]>([]);
+  const [caseStatusData, setCaseStatusData] = useState<{status: string; count: number}[]>([]);
+
+  const supabase = createClient();
 
   const loadDashboardData = useCallback(async () => {
     setLoading(true);
     setError(null);
+    
     try {
-      const { start, end } = getDateRange();
-      const prevRange = {
-        start: subDays(start, 30),
-        end: start,
-      };
+      console.log('📊 Loading dashboard data...');
 
-      // Use incident_date for filtering - this is the key fix
-      const startDateStr = start.toISOString().split('T')[0];
-      const endDateStr = end.toISOString().split('T')[0];
-      const prevStartStr = prevRange.start.toISOString().split('T')[0];
-      const prevEndStr = prevRange.end.toISOString().split('T')[0];
+      // 1. Get Total Districts
+      const { data: districtsData } = await supabase
+        .from('fir_records')
+        .select('district_name')
+        .not('district_name', 'is', null);
+      
+      const uniqueDistricts = [...new Set((districtsData || []).map(d => d.district_name).filter(Boolean))];
+      
+      // 2. Get Total Thanas
+      const { data: thanasData } = await supabase
+        .from('fir_records')
+        .select('thana_name')
+        .not('thana_name', 'is', null);
+      
+      const uniqueThanas = [...new Set((thanasData || []).map(t => t.thana_name).filter(Boolean))];
 
-      console.log('Loading data for date range:', { startDateStr, endDateStr });
+      // 3. Get Total FIRs
+      const { count: totalFirs } = await supabase
+        .from('fir_records')
+        .select('*', { count: 'exact', head: true });
 
-      // Fetch FIRs - use incident_date if available, otherwise created_at
-      const [firsRes, prevFirsRes, districtsRes] = await Promise.all([
-        supabase
-          .from('fir_records')
-          .select('id, incident_date, created_at, railway_district_id, police_station_id, modus_operandi_id')
-          .gte('incident_date', startDateStr)
-          .lte('incident_date', endDateStr),
-        supabase
-          .from('fir_records')
-          .select('id, incident_date, created_at')
-          .gte('incident_date', prevStartStr)
-          .lte('incident_date', prevEndStr),
-        supabase.from('railway_districts').select('id, name'),
-      ]);
+      // 4. Get Total Accused
+      const { count: totalAccused } = await supabase
+        .from('accused_details')
+        .select('*', { count: 'exact', head: true });
 
-      if (firsRes.error) {
-        console.error('FIR query error:', firsRes.error);
-        throw new Error(firsRes.error.message);
-      }
+      // 5. Get Total Bailers
+      const { count: totalBailers } = await supabase
+        .from('bailer_details')
+        .select('*', { count: 'exact', head: true });
 
-      const firs = firsRes.data || [];
-      const prevFirs = prevFirsRes.data || [];
-      const firIds = firs.map((f) => f.id);
-      const districtMap = new Map(
-        (districtsRes.data || []).map((d) => [d.id, d.name])
-      );
+      // 6. Get Bailed count
+      const { count: totalBailed } = await supabase
+        .from('accused_details')
+        .select('*', { count: 'exact', head: true })
+        .eq('accused_type', 'bailed');
 
-      console.log('FIRs loaded:', firs.length);
-
-      // Get accused data
-      let accused: any[] = [];
-      if (firIds.length > 0) {
-        const accusedRes = await supabase
-          .from('accused_persons')
-          .select('id, age, custody_status, fir_id')
-          .in('fir_id', firIds);
-        
-        if (accusedRes.error) {
-          console.error('Accused query error:', accusedRes.error);
-        } else {
-          accused = accusedRes.data || [];
-        }
-      }
-
-      console.log('Accused loaded:', accused.length);
-
-      const totalFirs = firs.length;
-      const totalAccused = accused.length;
-      const bailCases = accused.filter((a) => a.custody_status === 'bail').length;
-      const custodyCases = accused.filter((a) => a.custody_status === 'custody').length;
-      const prevTotalFirs = prevFirs.length;
-      const firChange =
-        prevTotalFirs > 0 ? ((totalFirs - prevTotalFirs) / prevTotalFirs) * 100 : 0;
+      // 7. Get Custody count
+      const { count: totalCustody } = await supabase
+        .from('accused_details')
+        .select('*', { count: 'exact', head: true })
+        .eq('accused_type', 'arrested');
 
       setStats({
-        totalFirs,
-        totalAccused,
-        bailCases,
-        custodyCases,
-        firChange,
+        totalDistricts: uniqueDistricts.length,
+        totalThanas: uniqueThanas.length,
+        totalFirs: totalFirs || 0,
+        totalAccused: totalAccused || 0,
+        totalBailers: totalBailers || 0,
+        totalBailed: totalBailed || 0,
+        totalCustody: totalCustody || 0,
       });
 
-      // District data
-      const districtCounts = new Map<string, number>();
-      firs.forEach((fir) => {
-        const districtId = fir.railway_district_id;
-        if (districtId) {
-          districtCounts.set(districtId, (districtCounts.get(districtId) || 0) + 1);
+      // 8. Top Districts
+      const { data: allFirs } = await supabase
+        .from('fir_records')
+        .select('id, district_name, thana_name');
+
+      const firIds = (allFirs || []).map(f => f.id);
+      
+      let accusedByFir: any[] = [];
+      if (firIds.length > 0) {
+        const { data } = await supabase
+          .from('accused_details')
+          .select('fir_id')
+          .in('fir_id', firIds);
+        accusedByFir = data || [];
+      }
+
+      // District counts
+      const districtMap = new Map<string, number>();
+      accusedByFir.forEach(acc => {
+        const fir = allFirs?.find(f => f.id === acc.fir_id);
+        if (fir?.district_name) {
+          districtMap.set(fir.district_name, (districtMap.get(fir.district_name) || 0) + 1);
         }
       });
 
-      const districtLabels: string[] = [];
-      const districtValues: number[] = [];
-      districtCounts.forEach((count, id) => {
-        const name = districtMap.get(id);
-        if (name) {
-          districtLabels.push(name);
-          districtValues.push(count);
-        }
-      });
-      setDistrictData({ labels: districtLabels, values: districtValues });
-
-      // Modus operandi
-      const modusMap = new Map<string, number>();
-      firs.forEach((fir) => {
-        const mo = fir.modus_operandi_id;
-        if (mo) {
-          modusMap.set(mo, (modusMap.get(mo) || 0) + 1);
-        }
-      });
-
-      const sortedModus = Array.from(modusMap.entries())
-        .sort((a, b) => b[1] - a[1])
-        .slice(0, 10);
-      setModusOperandiData({
-        labels: sortedModus.map(([label]) => label),
-        values: sortedModus.map(([, value]) => value),
-      });
-
-      // Monthly trend - simplified for performance
-      const months = Array.from({ length: 6 }, (_, i) => {
-        const date = subMonths(new Date(), 5 - i);
-        return format(date, 'MMM yyyy');
-      });
-
-      const monthlyDataPromises = months.map(async (_, i) => {
-        const monthStart = startOfMonth(subMonths(new Date(), 5 - i));
-        const monthEnd = endOfMonth(monthStart);
-        const monthStartStr = monthStart.toISOString().split('T')[0];
-        const monthEndStr = monthEnd.toISOString().split('T')[0];
-
-        const monthFirsRes = await supabase
-          .from('fir_records')
-          .select('id, incident_date, created_at')
-          .gte('incident_date', monthStartStr)
-          .lte('incident_date', monthEndStr)
-          .limit(5000);
-
-        const monthFirIds = (monthFirsRes.data || []).map((f) => f.id);
-        
-        let monthAccused: any[] = [];
-        if (monthFirIds.length > 0) {
-          const accusedRes = await supabase
-            .from('accused_persons')
-            .select('custody_status, fir_id')
-            .in('fir_id', monthFirIds)
-            .limit(10000);
-          monthAccused = accusedRes.data || [];
-        }
-
-        return {
-          firs: monthFirIds.length,
-          bail: monthAccused.filter((a) => a.custody_status === 'bail').length,
-          custody: monthAccused.filter((a) => a.custody_status === 'custody').length,
-        };
-      });
-
-      const monthlyData = await Promise.all(monthlyDataPromises);
-
-      setMonthlyTrend({
-        labels: months,
-        datasets: [
-          { label: 'FIRs', data: monthlyData.map((d) => d.firs), color: '#1d4ed8' },
-          { label: 'Bail', data: monthlyData.map((d) => d.bail), color: '#16a34a' },
-          { label: 'Custody', data: monthlyData.map((d) => d.custody), color: '#dc2626' },
-        ],
-      });
-
-      // Age groups
-      const ageGroups = {
-        minor: 0,
-        '18-30': 0,
-        '30-50': 0,
-        '50+': 0,
-      };
-
-      accused.forEach((a) => {
-        if (a.age < 18) ageGroups.minor++;
-        else if (a.age < 30) ageGroups['18-30']++;
-        else if (a.age < 50) ageGroups['30-50']++;
-        else ageGroups['50+']++;
-      });
-
-      setAgeGroupData({
-        labels: ['Minor (<18)', '18-30', '30-50', '50+'],
-        values: [
-          ageGroups.minor,
-          ageGroups['18-30'],
-          ageGroups['30-50'],
-          ageGroups['50+'],
-        ],
-      });
-
-      // Station performance
-      const stationMap = new Map<string, any>();
-      firs.forEach((fir) => {
-        const stationId = fir.police_station_id;
-        if (stationId) {
-          if (!stationMap.has(stationId)) {
-            stationMap.set(stationId, {
-              stationId,
-              firs: 0,
-              accused: 0,
-              bail: 0,
-              custody: 0,
-            });
-          }
-          const station = stationMap.get(stationId)!;
-          station.firs++;
-        }
-      });
-
-      accused.forEach((acc) => {
-        const fir = firs.find((f) => f.id === acc.fir_id);
-        if (fir && fir.police_station_id && stationMap.has(fir.police_station_id)) {
-          const station = stationMap.get(fir.police_station_id)!;
-          station.accused++;
-          if (acc.custody_status === 'bail') station.bail++;
-          if (acc.custody_status === 'custody') station.custody++;
-        }
-      });
-
-      const { data: stationsData } = await supabase
-        .from('police_stations')
-        .select('id, name');
-
-      const stationsMap = new Map(
-        (stationsData || []).map((s) => [s.id, s.name])
+      setTopDistricts(
+        Array.from(districtMap.entries())
+          .map(([name, count]) => ({ name, count }))
+          .sort((a, b) => b.count - a.count)
+          .slice(0, 10)
       );
 
-      const performanceData = Array.from(stationMap.entries())
-        .map(([stationId, data]) => {
-          const stationName = stationsMap.get(stationId) || 'Unknown';
-          return {
-            station: stationName,
-            firs: data.firs,
-            accused: data.accused,
-            bail: data.bail,
-            custody: data.custody,
-            pending: data.accused - data.bail - data.custody,
-          };
-        })
-        .sort((a, b) => b.firs - a.firs)
-        .slice(0, 10);
+      // Thana counts
+      const thanaMap = new Map<string, number>();
+      accusedByFir.forEach(acc => {
+        const fir = allFirs?.find(f => f.id === acc.fir_id);
+        if (fir?.thana_name) {
+          thanaMap.set(fir.thana_name, (thanaMap.get(fir.thana_name) || 0) + 1);
+        }
+      });
 
-      setStationPerformance(performanceData);
+      setTopThanas(
+        Array.from(thanaMap.entries())
+          .map(([name, count]) => ({ name, count }))
+          .sort((a, b) => b.count - a.count)
+          .slice(0, 10)
+      );
 
-      // Activities
-      const { data: auditData } = await supabase
-        .from('audit_logs')
-        .select('id, action, table_name, created_at, users(full_name)')
+      // 9. Recent FIRs
+      const { data: recentFirsData } = await supabase
+        .from('fir_records')
+        .select('id, fir_number, incident_date, case_status, district_name, thana_name, created_at')
         .order('created_at', { ascending: false })
         .limit(10);
 
-      const formattedActivities = (auditData || []).map((log: any) => ({
-        id: log.id,
-        action: log.action,
-        user_name: log.users?.full_name || 'Unknown',
-        table_name: log.table_name,
-        created_at: log.created_at,
-      }));
+      setRecentFirs(recentFirsData || []);
 
-      setActivities(formattedActivities);
-    } catch (error: any) {
-      console.error('Dashboard load error:', error);
-      setError(error.message || 'Failed to load dashboard data');
-      toast.error('Failed to load dashboard data: ' + error.message);
+      // 10. Case Status
+      const { data: statusData } = await supabase
+        .from('fir_records')
+        .select('case_status');
+
+      const statusMap = new Map<string, number>();
+      (statusData || []).forEach(fir => {
+        const status = fir.case_status || 'open';
+        statusMap.set(status, (statusMap.get(status) || 0) + 1);
+      });
+
+      setCaseStatusData(
+        Array.from(statusMap.entries())
+          .map(([status, count]) => ({ status, count }))
+          .sort((a, b) => b.count - a.count)
+      );
+
+      setLastUpdated(new Date().toLocaleString('en-IN'));
+      console.log('✅ Dashboard loaded!');
+
+    } catch (err: any) {
+      console.error('❌ Error:', err);
+      setError(err.message);
+      toast.error('Failed to load dashboard data');
     } finally {
       setLoading(false);
     }
-  }, [supabase, getDateRange]);
+  }, [supabase]);
 
   useEffect(() => {
     loadDashboardData();
-    const interval = setInterval(loadDashboardData, 5 * 60 * 1000);
-    return () => clearInterval(interval);
   }, [loadDashboardData]);
 
-  return (
-    <div className="space-y-6">
-      {/* Header Section */}
-      <div className="bg-gradient-to-r from-amber-500 to-orange-500 rounded-2xl p-6 text-white shadow-xl">
-        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-          <div>
-            <h1 className="text-4xl font-bold mb-2">Crime Analytics Dashboard</h1>
-            <p className="text-amber-100 text-lg">Real-time insights and comprehensive reporting</p>
-          </div>
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={() => loadDashboardData()}
-            disabled={loading}
-            className="bg-white text-amber-600 hover:bg-amber-50"
-          >
-            <RefreshCw className={`h-4 w-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
-            Refresh Data
-          </Button>
-        </div>
-      </div>
+  const formatDate = (dateStr: string) => {
+    if (!dateStr) return '-';
+    return new Date(dateStr).toLocaleDateString('en-IN', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric'
+    });
+  };
 
-      {/* Error Message */}
-      {error && (
-        <Card className="border-2 border-red-300 bg-red-50">
-          <CardContent className="pt-6">
-            <div className="flex items-center gap-3 text-red-700">
-              <AlertCircle className="h-5 w-5" />
+  const getStatusConfig = (status: string) => {
+    const config: Record<string, { bg: string; text: string; border: string; label: string }> = {
+      open: { 
+        bg: 'bg-orange-100', 
+        text: 'text-orange-700', 
+        border: 'border-orange-300',
+        label: 'OPEN' 
+      },
+      registered: { 
+        bg: 'bg-blue-100', 
+        text: 'text-blue-700', 
+        border: 'border-blue-300',
+        label: 'REGISTERED' 
+      },
+      under_investigation: { 
+        bg: 'bg-yellow-100', 
+        text: 'text-yellow-700', 
+        border: 'border-yellow-300',
+        label: 'INVESTIGATING' 
+      },
+      chargesheet_filed: { 
+        bg: 'bg-purple-100', 
+        text: 'text-purple-700', 
+        border: 'border-purple-300',
+        label: 'CHARGESHEET' 
+      },
+      closed: { 
+        bg: 'bg-gray-100', 
+        text: 'text-gray-700', 
+        border: 'border-gray-300',
+        label: 'CLOSED' 
+      },
+    };
+    return config[status?.toLowerCase()] || { 
+      bg: 'bg-gray-100', 
+      text: 'text-gray-700', 
+      border: 'border-gray-300',
+      label: status?.toUpperCase() || 'UNKNOWN' 
+    };
+  };
+
+  return (
+    <div className="min-h-screen bg-background p-4 lg:p-6">
+      <div className="max-w-7xl mx-auto">
+        {/* Header */}
+        <div className="mb-6">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <div className="p-2 bg-primary/10 rounded-lg">
+                <BarChart3 className="h-6 w-6 text-primary" />
+              </div>
               <div>
-                <p className="font-semibold">Error loading data</p>
-                <p className="text-sm">{error}</p>
+                <h1 className="text-2xl font-bold">Dashboard</h1>
+                <p className="text-muted-foreground text-sm">
+                  Crime Management Analytics & Statistics
+                </p>
               </div>
             </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Date Filter */}
-      <Card className="border-2 border-amber-200 bg-white shadow-lg">
-        <CardHeader className="bg-gradient-to-r from-amber-50 to-orange-50 border-b">
-          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-            <CardTitle className="text-xl flex items-center gap-2">
-              <TrendingUp className="h-5 w-5 text-amber-600" />
-              Time Period Selection
-            </CardTitle>
-            <Select
-              value={filters.dateRange}
-              onValueChange={(value) =>
-                setFilters({ ...filters, dateRange: value })
-              }
-            >
-              <SelectTrigger className="w-full sm:w-64 bg-white">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="today">Today</SelectItem>
-                <SelectItem value="7">Last 7 Days</SelectItem>
-                <SelectItem value="30">Last 30 Days</SelectItem>
-                <SelectItem value="month">This Month</SelectItem>
-              </SelectContent>
-            </Select>
+            <div className="flex items-center gap-3">
+              <div className="text-right hidden sm:block">
+                <p className="text-xs text-muted-foreground">Last Updated</p>
+                <p className="text-sm font-medium">{lastUpdated || 'Never'}</p>
+              </div>
+              <Button
+                onClick={loadDashboardData}
+                disabled={loading}
+                variant="outline"
+              >
+                <RefreshCw className={`h-4 w-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
+                Refresh
+              </Button>
+            </div>
           </div>
-        </CardHeader>
-      </Card>
+        </div>
 
-      {/* Key Metrics Cards */}
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        {loading ? (
-          Array.from({ length: 4 }).map((_, i) => (
-            <Card key={i} className="border-2 border-amber-200 bg-white shadow-lg">
-              <CardHeader>
-                <Skeleton className="h-4 w-24" />
-              </CardHeader>
-              <CardContent>
-                <Skeleton className="h-10 w-20 mb-2" />
-                <Skeleton className="h-3 w-32" />
-              </CardContent>
-            </Card>
-          ))
-        ) : (
-          <>
-            <Card className="border-2 border-blue-300 bg-gradient-to-br from-blue-50 to-blue-100 shadow-xl hover:shadow-2xl transition-shadow">
-              <CardHeader className="pb-2">
-                <div className="flex items-center justify-between">
-                  <CardTitle className="text-sm font-semibold text-blue-900">Total FIRs Registered</CardTitle>
-                  <div className="h-10 w-10 rounded-full bg-blue-500 flex items-center justify-center">
-                    <FileText className="h-5 w-5 text-white" />
-                  </div>
+        {/* Error Alert */}
+        {error && (
+          <Card className="border-red-500 bg-red-50 mb-6">
+            <CardContent className="pt-6">
+              <div className="flex items-center gap-3">
+                <AlertTriangle className="h-5 w-5 text-red-600" />
+                <div>
+                  <p className="font-semibold text-red-900">Error Loading Dashboard</p>
+                  <p className="text-sm text-red-700">{error}</p>
                 </div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Stats Grid */}
+        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-4 mb-6">
+          {/* Districts Card */}
+          <Card className="border-2">
+            <CardContent className="p-4">
+              <div className="flex items-center justify-between mb-2">
+                <Building className="h-5 w-5 text-blue-600" />
+                <TrendingUp className="h-4 w-4 text-green-600" />
+              </div>
+              <p className="text-2xl font-bold">
+                {loading ? (
+                  <span className="inline-block w-12 h-6 bg-muted animate-pulse rounded"></span>
+                ) : stats.totalDistricts}
+              </p>
+              <p className="text-xs text-muted-foreground font-medium mt-1">Total Districts</p>
+            </CardContent>
+          </Card>
+
+          {/* Thanas Card */}
+          <Card className="border-2">
+            <CardContent className="p-4">
+              <div className="flex items-center justify-between mb-2">
+                <MapPin className="h-5 w-5 text-purple-600" />
+                <TrendingUp className="h-4 w-4 text-green-600" />
+              </div>
+              <p className="text-2xl font-bold">
+                {loading ? (
+                  <span className="inline-block w-12 h-6 bg-muted animate-pulse rounded"></span>
+                ) : stats.totalThanas}
+              </p>
+              <p className="text-xs text-muted-foreground font-medium mt-1">Total Thanas</p>
+            </CardContent>
+          </Card>
+
+          {/* FIRs Card */}
+          <Card className="border-2">
+            <CardContent className="p-4">
+              <div className="flex items-center justify-between mb-2">
+                <FileText className="h-5 w-5 text-orange-600" />
+                <Activity className="h-4 w-4 text-orange-600" />
+              </div>
+              <p className="text-2xl font-bold">
+                {loading ? (
+                  <span className="inline-block w-12 h-6 bg-muted animate-pulse rounded"></span>
+                ) : stats.totalFirs}
+              </p>
+              <p className="text-xs text-muted-foreground font-medium mt-1">Total FIRs</p>
+            </CardContent>
+          </Card>
+
+          {/* Accused Card */}
+          <Card className="border-2">
+            <CardContent className="p-4">
+              <div className="flex items-center justify-between mb-2">
+                <Users className="h-5 w-5 text-red-600" />
+                <AlertTriangle className="h-4 w-4 text-red-600" />
+              </div>
+              <p className="text-2xl font-bold">
+                {loading ? (
+                  <span className="inline-block w-12 h-6 bg-muted animate-pulse rounded"></span>
+                ) : stats.totalAccused}
+              </p>
+              <p className="text-xs text-muted-foreground font-medium mt-1">Total Accused</p>
+            </CardContent>
+          </Card>
+
+          {/* Bailers Card */}
+          <Card className="border-2">
+            <CardContent className="p-4">
+              <div className="flex items-center justify-between mb-2">
+                <User className="h-5 w-5 text-indigo-600" />
+                <Shield className="h-4 w-4 text-indigo-600" />
+              </div>
+              <p className="text-2xl font-bold">
+                {loading ? (
+                  <span className="inline-block w-12 h-6 bg-muted animate-pulse rounded"></span>
+                ) : stats.totalBailers}
+              </p>
+              <p className="text-xs text-muted-foreground font-medium mt-1">Total Bailers</p>
+            </CardContent>
+          </Card>
+
+          {/* Bailed Card */}
+          <Card className="border-2">
+            <CardContent className="p-4">
+              <div className="flex items-center justify-between mb-2">
+                <Scale className="h-5 w-5 text-green-600" />
+                <CheckCircle className="h-4 w-4 text-green-600" />
+              </div>
+              <p className="text-2xl font-bold">
+                {loading ? (
+                  <span className="inline-block w-12 h-6 bg-muted animate-pulse rounded"></span>
+                ) : stats.totalBailed}
+              </p>
+              <p className="text-xs text-muted-foreground font-medium mt-1">Total Bailed</p>
+            </CardContent>
+          </Card>
+
+          {/* Custody Card */}
+          <Card className="border-2">
+            <CardContent className="p-4">
+              <div className="flex items-center justify-between mb-2">
+                <Lock className="h-5 w-5 text-amber-600" />
+                <Clock className="h-4 w-4 text-amber-600" />
+              </div>
+              <p className="text-2xl font-bold">
+                {loading ? (
+                  <span className="inline-block w-12 h-6 bg-muted animate-pulse rounded"></span>
+                ) : stats.totalCustody}
+              </p>
+              <p className="text-xs text-muted-foreground font-medium mt-1">In Custody</p>
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* Top Districts & Thanas */}
+        <div className="grid lg:grid-cols-2 gap-6 mb-6">
+          {/* Top Districts */}
+          <Card className="border-2">
+            <CardHeader className="bg-muted/30 border-b pb-4">
+              <CardTitle className="text-lg flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Building className="h-5 w-5 text-primary" />
+                  <span>Top Districts by Accused</span>
+                </div>
+                <Badge variant="secondary">Top 10</Badge>
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="p-0">
+              {loading ? (
+                <div className="py-12 text-center">
+                  <RefreshCw className="h-8 w-8 animate-spin mx-auto text-primary mb-3" />
+                  <p className="text-muted-foreground">Loading...</p>
+                </div>
+              ) : topDistricts.length === 0 ? (
+                <div className="py-12 text-center">
+                  <Building className="h-12 w-12 mx-auto text-muted-foreground mb-3 opacity-50" />
+                  <p className="text-muted-foreground">No data available</p>
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full">
+                    <thead className="bg-muted/50 border-b-2">
+                      <tr>
+                        <th className="px-4 py-3 text-left text-xs font-bold">RANK</th>
+                        <th className="px-4 py-3 text-left text-xs font-bold">DISTRICT NAME</th>
+                        <th className="px-4 py-3 text-right text-xs font-bold">ACCUSED COUNT</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y">
+                      {topDistricts.map((item, idx) => (
+                        <tr key={item.name} className="hover:bg-muted/30 transition-colors">
+                          <td className="px-4 py-3">
+                            <Badge 
+                              variant={idx === 0 ? "default" : idx < 3 ? "secondary" : "outline"}
+                              className="font-bold"
+                            >
+                              #{idx + 1}
+                            </Badge>
+                          </td>
+                          <td className="px-4 py-3 font-medium">{item.name}</td>
+                          <td className="px-4 py-3 text-right">
+                            <Badge className="bg-blue-100 text-blue-700 border-blue-300">
+                              {item.count}
+                            </Badge>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Top Thanas */}
+          <Card className="border-2">
+            <CardHeader className="bg-muted/30 border-b pb-4">
+              <CardTitle className="text-lg flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <MapPin className="h-5 w-5 text-primary" />
+                  <span>Top Thanas by Accused</span>
+                </div>
+                <Badge variant="secondary">Top 10</Badge>
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="p-0">
+              {loading ? (
+                <div className="py-12 text-center">
+                  <RefreshCw className="h-8 w-8 animate-spin mx-auto text-primary mb-3" />
+                  <p className="text-muted-foreground">Loading...</p>
+                </div>
+              ) : topThanas.length === 0 ? (
+                <div className="py-12 text-center">
+                  <MapPin className="h-12 w-12 mx-auto text-muted-foreground mb-3 opacity-50" />
+                  <p className="text-muted-foreground">No data available</p>
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full">
+                    <thead className="bg-muted/50 border-b-2">
+                      <tr>
+                        <th className="px-4 py-3 text-left text-xs font-bold">RANK</th>
+                        <th className="px-4 py-3 text-left text-xs font-bold">THANA NAME</th>
+                        <th className="px-4 py-3 text-right text-xs font-bold">ACCUSED COUNT</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y">
+                      {topThanas.map((item, idx) => (
+                        <tr key={item.name} className="hover:bg-muted/30 transition-colors">
+                          <td className="px-4 py-3">
+                            <Badge 
+                              variant={idx === 0 ? "default" : idx < 3 ? "secondary" : "outline"}
+                              className="font-bold"
+                            >
+                              #{idx + 1}
+                            </Badge>
+                          </td>
+                          <td className="px-4 py-3 font-medium">{item.name}</td>
+                          <td className="px-4 py-3 text-right">
+                            <Badge className="bg-purple-100 text-purple-700 border-purple-300">
+                              {item.count}
+                            </Badge>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* Recent FIRs & Case Status */}
+        <div className="grid lg:grid-cols-3 gap-6">
+          {/* Recent FIRs */}
+          <div className="lg:col-span-2">
+            <Card className="border-2">
+              <CardHeader className="bg-muted/30 border-b pb-4">
+                <CardTitle className="text-lg flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <FileText className="h-5 w-5 text-primary" />
+                    <span>Recent FIR Registrations</span>
+                  </div>
+                  <Badge variant="secondary">Last 10</Badge>
+                </CardTitle>
               </CardHeader>
-              <CardContent>
-                <div className="text-4xl font-bold text-blue-700 mb-1">{stats.totalFirs}</div>
-                {stats.firChange !== 0 && (
-                  <p className="text-xs text-blue-600">
-                    {stats.firChange > 0 ? '↑' : '↓'} {Math.abs(stats.firChange).toFixed(1)}% from previous period
-                  </p>
+              <CardContent className="p-0">
+                {loading ? (
+                  <div className="py-12 text-center">
+                    <RefreshCw className="h-8 w-8 animate-spin mx-auto text-primary mb-3" />
+                    <p className="text-muted-foreground">Loading...</p>
+                  </div>
+                ) : recentFirs.length === 0 ? (
+                  <div className="py-12 text-center">
+                    <FileText className="h-12 w-12 mx-auto text-muted-foreground mb-3 opacity-50" />
+                    <p className="text-muted-foreground">No FIRs found</p>
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full">
+                      <thead className="bg-muted/50 border-b-2">
+                        <tr>
+                          <th className="px-4 py-3 text-left text-xs font-bold">S.NO.</th>
+                          <th className="px-4 py-3 text-left text-xs font-bold">FIR NUMBER</th>
+                          <th className="px-4 py-3 text-left text-xs font-bold">DATE</th>
+                          <th className="px-4 py-3 text-left text-xs font-bold">LOCATION</th>
+                          <th className="px-4 py-3 text-center text-xs font-bold">STATUS</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y">
+                        {recentFirs.map((fir, idx) => {
+                          const statusConfig = getStatusConfig(fir.case_status);
+                          return (
+                            <tr key={fir.id} className="hover:bg-muted/30 transition-colors">
+                              <td className="px-4 py-3 text-sm">{idx + 1}</td>
+                              <td className="px-4 py-3">
+                                <span className="font-mono font-bold text-primary">
+                                  {fir.fir_number}
+                                </span>
+                              </td>
+                              <td className="px-4 py-3 text-sm">
+                                {formatDate(fir.incident_date)}
+                              </td>
+                              <td className="px-4 py-3">
+                                <div className="space-y-1">
+                                  <div className="text-sm">{fir.district_name || '-'}</div>
+                                  <div className="text-xs text-muted-foreground">
+                                    {fir.thana_name || '-'}
+                                  </div>
+                                </div>
+                              </td>
+                              <td className="px-4 py-3 text-center">
+                                <Badge 
+                                  className={`${statusConfig.bg} ${statusConfig.text} ${statusConfig.border} border`}
+                                >
+                                  {statusConfig.label}
+                                </Badge>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
                 )}
               </CardContent>
             </Card>
+          </div>
 
-            <Card className="border-2 border-purple-300 bg-gradient-to-br from-purple-50 to-purple-100 shadow-xl hover:shadow-2xl transition-shadow">
-              <CardHeader className="pb-2">
-                <div className="flex items-center justify-between">
-                  <CardTitle className="text-sm font-semibold text-purple-900">Total Accused Persons</CardTitle>
-                  <div className="h-10 w-10 rounded-full bg-purple-500 flex items-center justify-center">
-                    <Users className="h-5 w-5 text-white" />
-                  </div>
+          {/* Case Status Summary */}
+          <Card className="border-2">
+            <CardHeader className="bg-muted/30 border-b pb-4">
+              <CardTitle className="text-lg flex items-center gap-2">
+                <Gavel className="h-5 w-5 text-primary" />
+                <span>Case Status</span>
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="pt-6">
+              {loading ? (
+                <div className="py-8 text-center">
+                  <RefreshCw className="h-8 w-8 animate-spin mx-auto text-primary mb-3" />
+                  <p className="text-muted-foreground">Loading...</p>
                 </div>
-              </CardHeader>
-              <CardContent>
-                <div className="text-4xl font-bold text-purple-700 mb-1">{stats.totalAccused}</div>
-                <p className="text-xs text-purple-600">Across all FIR cases</p>
-              </CardContent>
-            </Card>
-
-            <Card className="border-2 border-green-300 bg-gradient-to-br from-green-50 to-green-100 shadow-xl hover:shadow-2xl transition-shadow">
-              <CardHeader className="pb-2">
-                <div className="flex items-center justify-between">
-                  <CardTitle className="text-sm font-semibold text-green-900">Bail Cases Granted</CardTitle>
-                  <div className="h-10 w-10 rounded-full bg-green-500 flex items-center justify-center">
-                    <Scale className="h-5 w-5 text-white" />
-                  </div>
+              ) : caseStatusData.length === 0 ? (
+                <div className="py-8 text-center">
+                  <Gavel className="h-12 w-12 mx-auto text-muted-foreground mb-3 opacity-50" />
+                  <p className="text-muted-foreground">No data available</p>
                 </div>
-              </CardHeader>
-              <CardContent>
-                <div className="text-4xl font-bold text-green-700 mb-1">{stats.bailCases}</div>
-                <p className="text-xs text-green-600">
-                  {stats.totalAccused > 0 ? ((stats.bailCases / stats.totalAccused) * 100).toFixed(1) : 0}% of total accused
-                </p>
-              </CardContent>
-            </Card>
-
-            <Card className="border-2 border-red-300 bg-gradient-to-br from-red-50 to-red-100 shadow-xl hover:shadow-2xl transition-shadow">
-              <CardHeader className="pb-2">
-                <div className="flex items-center justify-between">
-                  <CardTitle className="text-sm font-semibold text-red-900">Custody Cases</CardTitle>
-                  <div className="h-10 w-10 rounded-full bg-red-500 flex items-center justify-center">
-                    <Lock className="h-5 w-5 text-white" />
-                  </div>
+              ) : (
+                <div className="space-y-4">
+                  {caseStatusData.map((item) => {
+                    const config = getStatusConfig(item.status);
+                    const percentage = stats.totalFirs > 0 
+                      ? Math.round((item.count / stats.totalFirs) * 100)
+                      : 0;
+                    return (
+                      <div key={item.status} className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <Badge 
+                            className={`${config.bg} ${config.text} ${config.border} border`}
+                          >
+                            {config.label}
+                          </Badge>
+                          <span className="text-lg font-bold">{item.count}</span>
+                        </div>
+                        <div className="relative">
+                          <div className="w-full bg-muted rounded-full h-2 overflow-hidden">
+                            <div 
+                              className="h-full bg-primary transition-all duration-500"
+                              style={{ width: `${percentage}%` }}
+                            />
+                          </div>
+                          <span className="absolute right-0 -top-5 text-xs text-muted-foreground">
+                            {percentage}%
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
-              </CardHeader>
-              <CardContent>
-                <div className="text-4xl font-bold text-red-700 mb-1">{stats.custodyCases}</div>
-                <p className="text-xs text-red-600">
-                  {stats.totalAccused > 0 ? ((stats.custodyCases / stats.totalAccused) * 100).toFixed(1) : 0}% of total accused
-                </p>
-              </CardContent>
-            </Card>
-          </>
-        )}
-      </div>
+              )}
+            </CardContent>
+          </Card>
+        </div>
 
-      {/* Charts Section */}
-      <div className="grid gap-4 md:grid-cols-2">
-        <Card className="border-2 border-amber-200 bg-white shadow-lg">
-          <CardHeader className="bg-gradient-to-r from-amber-50 to-orange-50 border-b">
-            <CardTitle className="text-lg font-bold text-gray-800">District-wise FIR Distribution</CardTitle>
-            <p className="text-sm text-gray-600 mt-1">Breakdown by Railway District</p>
-          </CardHeader>
+        {/* Footer Info */}
+        <Card className="mt-6 bg-muted/30 border-2">
           <CardContent className="pt-6">
-            {loading ? (
-              <Skeleton className="h-[300px] w-full" />
-            ) : districtData.labels.length > 0 ? (
-              <PieChart data={districtData} />
-            ) : (
-              <div className="h-[300px] flex items-center justify-center text-gray-500">
-                <div className="text-center">
-                  <FileText className="h-12 w-12 mx-auto mb-2 text-gray-300" />
-                  <p>No district data available</p>
-                </div>
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-4 text-sm text-muted-foreground">
+              <div className="flex items-center gap-2">
+                <Shield className="h-4 w-4" />
+                <span>Railway Protection Force - Crime Management System</span>
               </div>
-            )}
-          </CardContent>
-        </Card>
-
-        <Card className="border-2 border-amber-200 bg-white shadow-lg">
-          <CardHeader className="bg-gradient-to-r from-amber-50 to-orange-50 border-b">
-            <CardTitle className="text-lg font-bold text-gray-800">Top Crime Methods</CardTitle>
-            <p className="text-sm text-gray-600 mt-1">Modus Operandi Analysis</p>
-          </CardHeader>
-          <CardContent className="pt-6">
-            {loading ? (
-              <Skeleton className="h-[300px] w-full" />
-            ) : modusOperandiData.labels.length > 0 ? (
-              <BarChart data={modusOperandiData} horizontal />
-            ) : (
-              <div className="h-[300px] flex items-center justify-center text-gray-500">
-                <div className="text-center">
-                  <AlertCircle className="h-12 w-12 mx-auto mb-2 text-gray-300" />
-                  <p>No modus operandi data available</p>
-                </div>
+              <div className="flex items-center gap-4">
+                <Badge variant="outline">Version 1.0</Badge>
+                <span>© 2024 All Rights Reserved</span>
               </div>
-            )}
-          </CardContent>
-        </Card>
-      </div>
-
-      <div className="grid gap-4 md:grid-cols-2">
-        <Card className="border-2 border-amber-200 bg-white shadow-lg">
-          <CardHeader className="bg-gradient-to-r from-amber-50 to-orange-50 border-b">
-            <CardTitle className="text-lg font-bold text-gray-800">Crime Trends (6 Months)</CardTitle>
-            <p className="text-sm text-gray-600 mt-1">FIRs, Bail, and Custody over time</p>
-          </CardHeader>
-          <CardContent className="pt-6">
-            {loading ? (
-              <Skeleton className="h-[300px] w-full" />
-            ) : (
-              <LineChart data={monthlyTrend} />
-            )}
-          </CardContent>
-        </Card>
-
-        <Card className="border-2 border-amber-200 bg-white shadow-lg">
-          <CardHeader className="bg-gradient-to-r from-amber-50 to-orange-50 border-b">
-            <CardTitle className="text-lg font-bold text-gray-800">Accused Age Distribution</CardTitle>
-            <p className="text-sm text-gray-600 mt-1">Demographic analysis</p>
-          </CardHeader>
-          <CardContent className="pt-6">
-            {loading ? (
-              <Skeleton className="h-[300px] w-full" />
-            ) : (
-              <DoughnutChart
-                data={ageGroupData}
-                centerText={stats.totalAccused.toString()}
-              />
-            )}
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Station Performance & Activity */}
-      <div className="grid gap-4 md:grid-cols-3">
-        <Card className="md:col-span-2 border-2 border-amber-200 bg-white shadow-lg">
-          <CardHeader className="bg-gradient-to-r from-amber-50 to-orange-50 border-b">
-            <CardTitle className="text-lg font-bold text-gray-800">Top Performing Police Stations</CardTitle>
-            <p className="text-sm text-gray-600 mt-1">Based on FIR registration count</p>
-          </CardHeader>
-          <CardContent className="pt-6">
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b-2 border-amber-200 bg-amber-50">
-                    <th className="text-left p-3 font-bold text-gray-800">Station Name</th>
-                    <th className="text-right p-3 font-bold text-gray-800">FIRs</th>
-                    <th className="text-right p-3 font-bold text-gray-800">Accused</th>
-                    <th className="text-right p-3 font-bold text-gray-800">Bail</th>
-                    <th className="text-right p-3 font-bold text-gray-800">Custody</th>
-                    <th className="text-right p-3 font-bold text-gray-800">Pending</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {loading ? (
-                    Array.from({ length: 5 }).map((_, i) => (
-                      <tr key={i} className="border-b">
-                        <td colSpan={6} className="p-3">
-                          <Skeleton className="h-4 w-full" />
-                        </td>
-                      </tr>
-                    ))
-                  ) : stationPerformance.length === 0 ? (
-                    <tr>
-                      <td colSpan={6} className="p-8 text-center text-gray-500">
-                        <AlertCircle className="h-8 w-8 mx-auto mb-2 text-gray-300" />
-                        <p>No station performance data available</p>
-                      </td>
-                    </tr>
-                  ) : (
-                    stationPerformance.map((station, idx) => (
-                      <tr
-                        key={idx}
-                        className={`border-b hover:bg-amber-50 transition-colors ${
-                          idx === 0 ? 'bg-green-50 font-semibold' : ''
-                        }`}
-                      >
-                        <td className="p-3">
-                          {idx === 0 && <span className="text-green-600 mr-2">🏆</span>}
-                          {station.station}
-                        </td>
-                        <td className="p-3 text-right font-medium">{station.firs}</td>
-                        <td className="p-3 text-right">{station.accused}</td>
-                        <td className="p-3 text-right text-green-600">{station.bail}</td>
-                        <td className="p-3 text-right text-red-600">{station.custody}</td>
-                        <td className="p-3 text-right text-orange-600">{station.pending}</td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
             </div>
           </CardContent>
         </Card>
-
-        <ActivityFeed activities={activities} />
       </div>
     </div>
   );

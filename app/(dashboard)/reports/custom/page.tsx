@@ -1,477 +1,382 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Checkbox } from '@/components/ui/checkbox';
-import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { FileText, Download, FileSpreadsheet, ArrowRight, ArrowLeft, CheckCircle2 } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
+import { Label } from '@/components/ui/label';
+import {
+  FileSearch, Download, RefreshCw, ChevronLeft, Calendar,
+  Building, MapPin, Filter, Eye, FileText
+} from 'lucide-react';
 import { toast } from 'sonner';
-import { exportToPDF, exportToExcel, exportToGoogleSheets } from '@/lib/export';
-import { Skeleton } from '@/components/ui/skeleton';
 
 export default function CustomReportPage() {
-  const [step, setStep] = useState(1);
-  const [loading, setLoading] = useState(false);
-  const [exporting, setExporting] = useState(false);
-  const [selectedData, setSelectedData] = useState({
-    firDetails: true,
-    accusedInfo: false,
-    bailDetails: false,
-  });
-  const [filters, setFilters] = useState({
-    dateFrom: '',
-    dateTo: '',
-    district: '',
-    station: '',
-    crimeType: '',
-    status: '',
-  });
-  const [grouping, setGrouping] = useState({
-    groupBy: '',
-    sortBy: '',
-    order: 'desc',
-  });
-  const [previewData, setPreviewData] = useState<any[]>([]);
-  const [districts, setDistricts] = useState<any[]>([]);
-  const [stations, setStations] = useState<any[]>([]);
+  const router = useRouter();
   const supabase = createClient();
+  const [loading, setLoading] = useState(false);
+  const [districts, setDistricts] = useState<string[]>([]);
+  const [thanas, setThanas] = useState<string[]>([]);
+  const [results, setResults] = useState<any[]>([]);
+
+  const [filters, setFilters] = useState({
+    startDate: '',
+    endDate: '',
+    district: '',
+    thana: '',
+    caseStatus: '',
+    accusedType: ''
+  });
 
   useEffect(() => {
-    loadMasterData();
+    loadDropdowns();
   }, []);
 
-  const loadMasterData = async () => {
-    const [districtsRes, stationsRes] = await Promise.all([
-      supabase.from('railway_districts').select('id, name').order('name'),
-      supabase.from('police_stations').select('id, name').order('name'),
-    ]);
-    if (districtsRes.data) setDistricts(districtsRes.data);
-    if (stationsRes.data) setStations(stationsRes.data);
+  const loadDropdowns = async () => {
+    // Load unique districts
+    const { data: districtData } = await supabase
+      .from('fir_records')
+      .select('district_name')
+      .not('district_name', 'is', null);
+
+    const uniqueDistricts = [...new Set(districtData?.map(d => d.district_name).filter(Boolean))];
+    setDistricts(uniqueDistricts.sort());
+
+    // Load unique thanas
+    const { data: thanaData } = await supabase
+      .from('fir_records')
+      .select('thana_name')
+      .not('thana_name', 'is', null);
+
+    const uniqueThanas = [...new Set(thanaData?.map(t => t.thana_name).filter(Boolean))];
+    setThanas(uniqueThanas.sort());
   };
 
-  const generatePreview = async () => {
+  const generateReport = async () => {
     setLoading(true);
     try {
-      let query = supabase.from('fir_records').select('*, police_stations(name), railway_districts(name)').limit(100);
+      let query = supabase
+        .from('fir_records')
+        .select('*')
+        .order('created_at', { ascending: false });
 
-      if (filters.dateFrom) query = query.gte('incident_date', filters.dateFrom);
-      if (filters.dateTo) query = query.lte('incident_date', filters.dateTo);
-      if (filters.district) query = query.eq('railway_district_id', filters.district);
-      if (filters.station) query = query.eq('police_station_id', filters.station);
-      if (filters.status) query = query.eq('case_status', filters.status);
+      // Apply filters
+      if (filters.startDate) {
+        query = query.gte('created_at', `${filters.startDate}T00:00:00`);
+      }
+      if (filters.endDate) {
+        query = query.lte('created_at', `${filters.endDate}T23:59:59`);
+      }
+      if (filters.district) {
+        query = query.eq('district_name', filters.district);
+      }
+      if (filters.thana) {
+        query = query.eq('thana_name', filters.thana);
+      }
+      if (filters.caseStatus) {
+        query = query.eq('case_status', filters.caseStatus);
+      }
 
-      const { data, error } = await query;
+      const { data, error } = await query.limit(500);
+
       if (error) throw error;
-      setPreviewData(data || []);
-      setStep(4);
+
+      if (!data || data.length === 0) {
+        setResults([]);
+        toast.info('No records found matching filters');
+        return;
+      }
+
+      // Get accused counts
+      const firIds = data.map(f => f.id);
+      const { data: accusedData } = await supabase
+        .from('accused_details')
+        .select('fir_id, accused_type')
+        .in('fir_id', firIds);
+
+      // Filter by accused type if selected
+      let filteredFirIds = firIds;
+      if (filters.accusedType && accusedData) {
+        const matchingFirIds = accusedData
+          .filter(a => a.accused_type === filters.accusedType)
+          .map(a => a.fir_id);
+        filteredFirIds = [...new Set(matchingFirIds)];
+      }
+
+      const accusedMap = new Map<number, number>();
+      accusedData?.forEach(a => {
+        accusedMap.set(a.fir_id, (accusedMap.get(a.fir_id) || 0) + 1);
+      });
+
+      const enrichedData = data
+        .filter(f => !filters.accusedType || filteredFirIds.includes(f.id))
+        .map(fir => ({
+          ...fir,
+          accused_count: accusedMap.get(fir.id) || 0
+        }));
+
+      setResults(enrichedData);
+      toast.success(`Found ${enrichedData.length} records`);
+
     } catch (error: any) {
-      toast.error('Failed to generate preview: ' + error.message);
+      console.error('Error:', error);
+      toast.error('Failed to generate report');
     } finally {
       setLoading(false);
     }
   };
 
-  const handleExport = async (format: 'pdf' | 'excel' | 'sheets') => {
-    if (previewData.length === 0) {
+  const handleExport = () => {
+    if (results.length === 0) {
       toast.error('No data to export');
       return;
     }
 
-    setExporting(true);
-    try {
-      const columns = [
-        { header: 'FIR Number', key: 'fir_number' },
-        { header: 'Date', key: 'incident_date' },
-        { header: 'Police Station', key: 'police_stations.name' },
-        { header: 'District', key: 'railway_districts.name' },
-        { header: 'Crime Type', key: 'modus_operandi_id' },
-        { header: 'Status', key: 'case_status' },
-      ];
+    const headers = ['S.No.', 'FIR Number', 'Date', 'District', 'Thana', 'Complainant', 'Accused Count', 'Status'];
+    const rows = results.map((fir, index) => [
+      index + 1,
+      fir.fir_number || '',
+      fir.incident_date || '',
+      fir.district_name || '',
+      fir.thana_name || '',
+      fir.complainant_name || '',
+      fir.accused_count || 0,
+      fir.case_status || ''
+    ]);
 
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-      const { data: userData } = await supabase
-        .from('users')
-        .select('id, full_name')
-        .eq('auth_id', user?.id)
-        .single();
+    const csvContent = [headers, ...rows].map(row => row.join(',')).join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `custom_report_${new Date().toISOString().split('T')[0]}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast.success('Exported successfully!');
+  };
 
-      if (format === 'pdf') {
-        await exportToPDF({
-          title: 'Custom Report',
-          data: previewData,
-          columns,
-          filters,
-          generatedBy: userData?.full_name,
-        });
-      } else if (format === 'excel') {
-        exportToExcel({
-          filename: 'Custom_Report',
-          sheets: [{ name: 'Report', data: previewData, columns }],
-        });
-      } else {
-        const result = exportToGoogleSheets(previewData, columns, 'Custom_Report');
-        toast.info(result.message);
-      }
-
-      if (userData) {
-        await supabase.from('export_logs').insert({
-          user_id: userData.id,
-          export_type: format.toUpperCase(),
-          report_type: 'Custom Report',
-          record_count: previewData.length,
-          filters_applied: { ...filters, ...selectedData, ...grouping },
-        });
-      }
-
-      toast.success('Report exported successfully');
-    } catch (error: any) {
-      toast.error('Export failed: ' + error.message);
-    } finally {
-      setExporting(false);
-    }
+  const clearFilters = () => {
+    setFilters({
+      startDate: '',
+      endDate: '',
+      district: '',
+      thana: '',
+      caseStatus: '',
+      accusedType: ''
+    });
+    setResults([]);
   };
 
   return (
-    <div className="space-y-6">
-      <div className="bg-gradient-to-r from-amber-500 to-orange-500 rounded-2xl p-6 text-white shadow-xl">
-        <h1 className="text-4xl font-bold mb-2">Custom Report Builder</h1>
-        <p className="text-amber-100 text-lg">Create personalized reports with custom filters and data selection</p>
-      </div>
+    <div className="min-h-screen bg-background p-4 lg:p-6">
+      <div className="max-w-7xl mx-auto space-y-6">
+        {/* Header */}
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <Button variant="outline" size="icon" onClick={() => router.push('/reports')}>
+              <ChevronLeft className="h-4 w-4" />
+            </Button>
+            <div className="p-2 bg-primary/10 rounded-lg">
+              <FileSearch className="h-6 w-6 text-primary" />
+            </div>
+            <div>
+              <h1 className="text-2xl font-bold">Custom Report Builder</h1>
+              <p className="text-muted-foreground text-sm">
+                Create custom reports with advanced filters
+              </p>
+            </div>
+          </div>
+          <Button onClick={handleExport} variant="outline" disabled={results.length === 0}>
+            <Download className="mr-2 h-4 w-4" />
+            Export CSV
+          </Button>
+        </div>
 
-      <Card className="border-2 border-amber-200 bg-white shadow-lg">
-        <CardHeader className="bg-gradient-to-r from-amber-50 to-orange-50 border-b">
-          <CardTitle className="text-lg flex items-center gap-2">
-            Step {step} of 5
-            <div className="flex-1 flex gap-2 ml-4">
-              {[1, 2, 3, 4, 5].map((s) => (
-                <div
-                  key={s}
-                  className={`flex-1 h-2 rounded ${
-                    s <= step ? 'bg-amber-500' : 'bg-gray-200'
-                  }`}
+        {/* Filters */}
+        <Card className="border-2">
+          <CardHeader className="bg-muted/30 border-b pb-4">
+            <CardTitle className="text-lg flex items-center gap-2">
+              <Filter className="h-5 w-5 text-primary" />
+              Report Filters
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="pt-6">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div>
+                <Label>Start Date</Label>
+                <Input
+                  type="date"
+                  value={filters.startDate}
+                  onChange={(e) => setFilters({ ...filters, startDate: e.target.value })}
+                  className="mt-1"
                 />
-              ))}
-            </div>
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="pt-6">
-          {step === 1 && (
-            <div className="space-y-6">
+              </div>
               <div>
-                <h3 className="text-xl font-bold mb-4 text-gray-800">Select Data Types</h3>
-                <p className="text-gray-600 mb-4">Choose which data you want to include in your report</p>
-                <div className="space-y-4">
-                  <div className="flex items-center space-x-3 p-4 border-2 rounded-lg hover:bg-amber-50 transition-colors">
-                    <Checkbox
-                      id="fir"
-                      checked={selectedData.firDetails}
-                      onCheckedChange={(checked) =>
-                        setSelectedData({ ...selectedData, firDetails: !!checked })
-                      }
-                    />
-                    <Label htmlFor="fir" className="flex-1 cursor-pointer">
-                      <div className="font-semibold text-gray-900">FIR Details</div>
-                      <div className="text-sm text-gray-600">Include all FIR record information</div>
-                    </Label>
-                  </div>
-                  <div className="flex items-center space-x-3 p-4 border-2 rounded-lg hover:bg-amber-50 transition-colors">
-                    <Checkbox
-                      id="accused"
-                      checked={selectedData.accusedInfo}
-                      onCheckedChange={(checked) =>
-                        setSelectedData({ ...selectedData, accusedInfo: !!checked })
-                      }
-                    />
-                    <Label htmlFor="accused" className="flex-1 cursor-pointer">
-                      <div className="font-semibold text-gray-900">Accused Information</div>
-                      <div className="text-sm text-gray-600">Include accused person details</div>
-                    </Label>
-                  </div>
-                  <div className="flex items-center space-x-3 p-4 border-2 rounded-lg hover:bg-amber-50 transition-colors">
-                    <Checkbox
-                      id="bail"
-                      checked={selectedData.bailDetails}
-                      onCheckedChange={(checked) =>
-                        setSelectedData({ ...selectedData, bailDetails: !!checked })
-                      }
-                    />
-                    <Label htmlFor="bail" className="flex-1 cursor-pointer">
-                      <div className="font-semibold text-gray-900">Bail Details</div>
-                      <div className="text-sm text-gray-600">Include bail information and status</div>
-                    </Label>
-                  </div>
-                </div>
+                <Label>End Date</Label>
+                <Input
+                  type="date"
+                  value={filters.endDate}
+                  onChange={(e) => setFilters({ ...filters, endDate: e.target.value })}
+                  className="mt-1"
+                />
               </div>
-              <div className="flex justify-end">
-                <Button onClick={() => setStep(2)} className="bg-amber-600 hover:bg-amber-700">
-                  Next Step <ArrowRight className="ml-2 h-4 w-4" />
-                </Button>
-              </div>
-            </div>
-          )}
-
-          {step === 2 && (
-            <div className="space-y-6">
               <div>
-                <h3 className="text-xl font-bold mb-4 text-gray-800">Apply Filters</h3>
-                <p className="text-gray-600 mb-4">Filter the data based on your requirements</p>
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <div>
-                    <Label>Date From</Label>
-                    <Input
-                      type="date"
-                      value={filters.dateFrom}
-                      onChange={(e) => setFilters({ ...filters, dateFrom: e.target.value })}
-                      className="mt-1.5"
-                    />
-                  </div>
-                  <div>
-                    <Label>Date To</Label>
-                    <Input
-                      type="date"
-                      value={filters.dateTo}
-                      onChange={(e) => setFilters({ ...filters, dateTo: e.target.value })}
-                      className="mt-1.5"
-                    />
-                  </div>
-                  <div>
-                    <Label>District</Label>
-                    <Select
-                      value={filters.district || undefined}
-                      onValueChange={(value) => setFilters({ ...filters, district: value })}
-                    >
-                      <SelectTrigger className="mt-1.5">
-                        <SelectValue placeholder="All Districts" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {districts.map((d) => (
-                          <SelectItem key={d.id} value={d.id}>
-                            {d.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div>
-                    <Label>Station</Label>
-                    <Select
-                      value={filters.station || undefined}
-                      onValueChange={(value) => setFilters({ ...filters, station: value })}
-                    >
-                      <SelectTrigger className="mt-1.5">
-                        <SelectValue placeholder="All Stations" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {stations.map((s) => (
-                          <SelectItem key={s.id} value={s.id}>
-                            {s.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div>
-                    <Label>Status</Label>
-                    <Select
-                      value={filters.status || undefined}
-                      onValueChange={(value) => setFilters({ ...filters, status: value })}
-                    >
-                      <SelectTrigger className="mt-1.5">
-                        <SelectValue placeholder="All Status" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="pending">Pending</SelectItem>
-                        <SelectItem value="investigation">Investigation</SelectItem>
-                        <SelectItem value="closed">Closed</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-              </div>
-              <div className="flex justify-between">
-                <Button variant="outline" onClick={() => setStep(1)}>
-                  <ArrowLeft className="mr-2 h-4 w-4" /> Back
-                </Button>
-                <Button onClick={() => setStep(3)} className="bg-amber-600 hover:bg-amber-700">
-                  Next Step <ArrowRight className="ml-2 h-4 w-4" />
-                </Button>
-              </div>
-            </div>
-          )}
-
-          {step === 3 && (
-            <div className="space-y-6">
-              <div>
-                <h3 className="text-xl font-bold mb-4 text-gray-800">Grouping & Sorting</h3>
-                <p className="text-gray-600 mb-4">Organize your report data</p>
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <div>
-                    <Label>Group By</Label>
-                    <Select
-                      value={grouping.groupBy || undefined}
-                      onValueChange={(value) => setGrouping({ ...grouping, groupBy: value })}
-                    >
-                      <SelectTrigger className="mt-1.5">
-                        <SelectValue placeholder="No Grouping" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="station">Police Station</SelectItem>
-                        <SelectItem value="district">District</SelectItem>
-                        <SelectItem value="crime">Crime Type</SelectItem>
-                        <SelectItem value="date">Date</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div>
-                    <Label>Sort By</Label>
-                    <Select
-                      value={grouping.sortBy || undefined}
-                      onValueChange={(value) => setGrouping({ ...grouping, sortBy: value })}
-                    >
-                      <SelectTrigger className="mt-1.5">
-                        <SelectValue placeholder="Default" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="date">Date</SelectItem>
-                        <SelectItem value="fir_number">FIR Number</SelectItem>
-                        <SelectItem value="modus_operandi_id">Crime Type</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div>
-                    <Label>Order</Label>
-                    <Select
-                      value={grouping.order}
-                      onValueChange={(value) => setGrouping({ ...grouping, order: value })}
-                    >
-                      <SelectTrigger className="mt-1.5">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="asc">Ascending</SelectItem>
-                        <SelectItem value="desc">Descending</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-              </div>
-              <div className="flex justify-between">
-                <Button variant="outline" onClick={() => setStep(2)}>
-                  <ArrowLeft className="mr-2 h-4 w-4" /> Back
-                </Button>
-                <Button onClick={generatePreview} disabled={loading} className="bg-amber-600 hover:bg-amber-700">
-                  {loading ? 'Generating...' : 'Generate Preview'}
-                </Button>
-              </div>
-            </div>
-          )}
-
-          {step === 4 && (
-            <div className="space-y-6">
-              <div>
-                <h3 className="text-xl font-bold mb-4 text-gray-800">Preview Report</h3>
-                <p className="text-gray-600 mb-4">
-                  Review your report data ({previewData.length} records found)
-                </p>
-                {loading ? (
-                  <Skeleton className="h-64 w-full" />
-                ) : (
-                  <div className="overflow-x-auto border-2 rounded-lg">
-                    <table className="w-full text-sm">
-                      <thead className="bg-gradient-to-r from-amber-500 to-orange-500 text-white">
-                        <tr>
-                          <th className="p-3 text-left font-bold">FIR Number</th>
-                          <th className="p-3 text-left font-bold">Date</th>
-                          <th className="p-3 text-left font-bold">Station</th>
-                          <th className="p-3 text-left font-bold">Crime Type</th>
-                          <th className="p-3 text-left font-bold">Status</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {previewData.slice(0, 10).map((item) => (
-                          <tr key={item.id} className="border-b hover:bg-amber-50">
-                            <td className="p-3">{item.fir_number}</td>
-                            <td className="p-3">{item.incident_date}</td>
-                            <td className="p-3">{item.police_stations?.name || 'N/A'}</td>
-                            <td className="p-3">{item.modus_operandi_id || 'N/A'}</td>
-                            <td className="p-3">{item.case_status || 'Pending'}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </div>
-              <div className="flex justify-between">
-                <Button variant="outline" onClick={() => setStep(3)}>
-                  <ArrowLeft className="mr-2 h-4 w-4" /> Back
-                </Button>
-                <Button onClick={() => setStep(5)} className="bg-amber-600 hover:bg-amber-700">
-                  Continue to Export <ArrowRight className="ml-2 h-4 w-4" />
-                </Button>
-              </div>
-            </div>
-          )}
-
-          {step === 5 && (
-            <div className="space-y-6">
-              <div>
-                <h3 className="text-xl font-bold mb-4 text-gray-800">Export Report</h3>
-                <p className="text-gray-600 mb-4">Choose your export format</p>
-                <div className="grid gap-4 sm:grid-cols-3">
-                  <Button
-                    onClick={() => handleExport('pdf')}
-                    disabled={exporting}
-                    variant="outline"
-                    className="h-24 flex-col border-2"
-                  >
-                    <FileText className="h-8 w-8 mb-2" />
-                    <span>PDF Format</span>
-                  </Button>
-                  <Button
-                    onClick={() => handleExport('excel')}
-                    disabled={exporting}
-                    variant="outline"
-                    className="h-24 flex-col border-2"
-                  >
-                    <FileSpreadsheet className="h-8 w-8 mb-2" />
-                    <span>Excel Format</span>
-                  </Button>
-                  <Button
-                    onClick={() => handleExport('sheets')}
-                    disabled={exporting}
-                    variant="outline"
-                    className="h-24 flex-col border-2"
-                  >
-                    <FileSpreadsheet className="h-8 w-8 mb-2" />
-                    <span>Google Sheets</span>
-                  </Button>
-                </div>
-              </div>
-              <div className="flex justify-between">
-                <Button variant="outline" onClick={() => setStep(4)}>
-                  <ArrowLeft className="mr-2 h-4 w-4" /> Back
-                </Button>
-                <Button
-                  onClick={() => {
-                    toast.success('Report template saved!');
-                    setStep(1);
-                  }}
-                  variant="outline"
+                <Label>District</Label>
+                <select
+                  value={filters.district}
+                  onChange={(e) => setFilters({ ...filters, district: e.target.value })}
+                  className="w-full mt-1 px-3 py-2 border rounded-lg bg-background"
                 >
-                  <CheckCircle2 className="mr-2 h-4 w-4" /> Save Template
-                </Button>
+                  <option value="">All Districts</option>
+                  {districts.map(d => (
+                    <option key={d} value={d}>{d}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <Label>Thana</Label>
+                <select
+                  value={filters.thana}
+                  onChange={(e) => setFilters({ ...filters, thana: e.target.value })}
+                  className="w-full mt-1 px-3 py-2 border rounded-lg bg-background"
+                >
+                  <option value="">All Thanas</option>
+                  {thanas.map(t => (
+                    <option key={t} value={t}>{t}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <Label>Case Status</Label>
+                <select
+                  value={filters.caseStatus}
+                  onChange={(e) => setFilters({ ...filters, caseStatus: e.target.value })}
+                  className="w-full mt-1 px-3 py-2 border rounded-lg bg-background"
+                >
+                  <option value="">All Statuses</option>
+                  <option value="open">Open</option>
+                  <option value="under_investigation">Under Investigation</option>
+                  <option value="chargesheet_filed">Chargesheet Filed</option>
+                  <option value="closed">Closed</option>
+                </select>
+              </div>
+              <div>
+                <Label>Accused Type</Label>
+                <select
+                  value={filters.accusedType}
+                  onChange={(e) => setFilters({ ...filters, accusedType: e.target.value })}
+                  className="w-full mt-1 px-3 py-2 border rounded-lg bg-background"
+                >
+                  <option value="">All Types</option>
+                  <option value="arrested">Arrested</option>
+                  <option value="bailed">Bailed</option>
+                  <option value="absconding">Absconding</option>
+                  <option value="unknown">Unknown</option>
+                </select>
               </div>
             </div>
-          )}
-        </CardContent>
-      </Card>
+            <div className="flex gap-2 mt-6">
+              <Button onClick={generateReport} disabled={loading}>
+                {loading ? (
+                  <RefreshCw className="h-4 w-4 animate-spin mr-2" />
+                ) : (
+                  <FileSearch className="h-4 w-4 mr-2" />
+                )}
+                Generate Report
+              </Button>
+              <Button variant="outline" onClick={clearFilters}>
+                Clear Filters
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Results */}
+        <Card className="border-2">
+          <CardHeader className="bg-muted/30 border-b pb-4">
+            <CardTitle className="text-lg flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <FileText className="h-5 w-5 text-primary" />
+                <span>Report Results</span>
+              </div>
+              <Badge variant="secondary">{results.length} Records</Badge>
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="p-0">
+            {loading ? (
+              <div className="py-12 text-center">
+                <RefreshCw className="h-8 w-8 animate-spin mx-auto text-primary mb-3" />
+                <p className="text-muted-foreground">Generating report...</p>
+              </div>
+            ) : results.length === 0 ? (
+              <div className="py-12 text-center">
+                <FileSearch className="h-12 w-12 mx-auto text-muted-foreground mb-3 opacity-50" />
+                <p className="font-semibold">No Results</p>
+                <p className="text-sm text-muted-foreground mt-1">
+                  Apply filters and click Generate Report
+                </p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead className="bg-muted/50 border-b-2">
+                    <tr>
+                      <th className="px-4 py-3 text-left text-xs font-bold">S.NO.</th>
+                      <th className="px-4 py-3 text-left text-xs font-bold">FIR NUMBER</th>
+                      <th className="px-4 py-3 text-left text-xs font-bold">DISTRICT / THANA</th>
+                      <th className="px-4 py-3 text-left text-xs font-bold">COMPLAINANT</th>
+                      <th className="px-4 py-3 text-center text-xs font-bold">ACCUSED</th>
+                      <th className="px-4 py-3 text-center text-xs font-bold">STATUS</th>
+                      <th className="px-4 py-3 text-right text-xs font-bold">ACTION</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y">
+                    {results.map((fir, index) => (
+                      <tr key={fir.id} className="hover:bg-muted/30 transition-colors">
+                        <td className="px-4 py-3 text-sm">{index + 1}</td>
+                        <td className="px-4 py-3">
+                          <Badge className="bg-blue-100 text-blue-700 border-blue-300 border font-mono">
+                            {fir.fir_number}
+                          </Badge>
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="space-y-1">
+                            <p className="font-medium">{fir.district_name || '-'}</p>
+                            <p className="text-xs text-muted-foreground flex items-center gap-1">
+                              <MapPin className="h-3 w-3" />
+                              {fir.thana_name || '-'}
+                            </p>
+                          </div>
+                        </td>
+                        <td className="px-4 py-3 text-sm">{fir.complainant_name || '-'}</td>
+                        <td className="px-4 py-3 text-center">
+                          <Badge variant="outline">{fir.accused_count || 0}</Badge>
+                        </td>
+                        <td className="px-4 py-3 text-center">
+                          <Badge variant="secondary">{fir.case_status || 'Open'}</Badge>
+                        </td>
+                        <td className="px-4 py-3 text-right">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => router.push(`/fir/${fir.id}`)}
+                          >
+                            <Eye className="h-3 w-3 mr-1" />
+                            View
+                          </Button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </div>
     </div>
   );
 }

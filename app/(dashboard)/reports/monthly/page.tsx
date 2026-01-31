@@ -1,240 +1,354 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { FileSpreadsheet, FileText } from 'lucide-react';
-import { exportToExcel, exportToPDF, exportToGoogleSheets } from '@/lib/export';
+import { Badge } from '@/components/ui/badge';
+import { Label } from '@/components/ui/label';
+import {
+  BarChart3, FileText, Download, RefreshCw, Users, MapPin,
+  ChevronLeft, Calendar, Building, TrendingUp, Scale
+} from 'lucide-react';
 import { toast } from 'sonner';
-import { format, startOfMonth, endOfMonth } from 'date-fns';
-import { Skeleton } from '@/components/ui/skeleton';
+
+interface MonthlyStat {
+  district_name: string;
+  thana_name: string;
+  total_firs: number;
+  total_accused: number;
+  arrested: number;
+  bailed: number;
+}
 
 export default function MonthlyReportPage() {
-  const [month, setMonth] = useState(format(new Date(), 'yyyy-MM'));
-  const [stats, setStats] = useState<any>({});
-  const [firs, setFirs] = useState<any[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [exporting, setExporting] = useState(false);
+  const router = useRouter();
   const supabase = createClient();
-
-  useEffect(() => {
-    loadMonthlyReport();
-  }, [month]);
+  const [loading, setLoading] = useState(false);
+  const [selectedMonth, setSelectedMonth] = useState(() => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  });
+  const [stats, setStats] = useState<MonthlyStat[]>([]);
+  const [summary, setSummary] = useState({
+    totalFirs: 0,
+    totalAccused: 0,
+    totalArrested: 0,
+    totalBailed: 0,
+    totalDistricts: 0,
+    totalThanas: 0
+  });
 
   const loadMonthlyReport = async () => {
+    if (!selectedMonth) {
+      toast.error('Please select a month');
+      return;
+    }
+
     setLoading(true);
     try {
-      const monthStart = startOfMonth(new Date(month + '-01'));
-      const monthEnd = endOfMonth(monthStart);
-      const monthStartStr = monthStart.toISOString().split('T')[0];
-      const monthEndStr = monthEnd.toISOString().split('T')[0];
+      const [year, month] = selectedMonth.split('-');
+      const startDate = `${year}-${month}-01`;
+      const endDate = new Date(parseInt(year), parseInt(month), 0).toISOString().split('T')[0];
 
-      const [firsRes, accusedRes] = await Promise.all([
-        supabase
-          .from('fir_records')
-          .select('id, modus_operandi_id, police_stations(name)')
-          .gte('incident_date', monthStartStr)
-          .lte('incident_date', monthEndStr),
-        supabase
-          .from('accused_persons')
-          .select('custody_status, fir_id'),
-      ]);
+      // Get FIRs for selected month
+      const { data: firData, error } = await supabase
+        .from('fir_records')
+        .select('id, district_name, thana_name')
+        .gte('created_at', `${startDate}T00:00:00`)
+        .lte('created_at', `${endDate}T23:59:59`);
 
-      const firsData = firsRes.data || [];
-      const firIds = firsData.map((f) => f.id);
-      const accusedData = (accusedRes.data || []).filter((a) =>
-        firIds.includes(a.fir_id)
-      );
+      if (error) throw error;
 
-      setFirs(firsData);
-      setStats({
-        totalFirs: firsData.length,
-        totalAccused: accusedData.length,
-        bailCases: accusedData.filter((a) => a.custody_status === 'bail').length,
-        custodyCases: accusedData.filter((a) => a.custody_status === 'custody').length,
+      if (!firData || firData.length === 0) {
+        setStats([]);
+        setSummary({
+          totalFirs: 0, totalAccused: 0, totalArrested: 0, 
+          totalBailed: 0, totalDistricts: 0, totalThanas: 0
+        });
+        toast.info('No data found for this month');
+        return;
+      }
+
+      // Get accused data
+      const firIds = firData.map(f => f.id);
+      const { data: accusedData } = await supabase
+        .from('accused_details')
+        .select('fir_id, accused_type')
+        .in('fir_id', firIds);
+
+      // Group by district/thana
+      const groupedStats = new Map<string, MonthlyStat>();
+
+      firData.forEach(fir => {
+        const key = `${fir.district_name || 'Unknown'}-${fir.thana_name || 'Unknown'}`;
+        if (!groupedStats.has(key)) {
+          groupedStats.set(key, {
+            district_name: fir.district_name || 'Unknown',
+            thana_name: fir.thana_name || 'Unknown',
+            total_firs: 0,
+            total_accused: 0,
+            arrested: 0,
+            bailed: 0
+          });
+        }
+        groupedStats.get(key)!.total_firs++;
       });
+
+      // Add accused counts
+      accusedData?.forEach(acc => {
+        const fir = firData.find(f => f.id === acc.fir_id);
+        if (fir) {
+          const key = `${fir.district_name || 'Unknown'}-${fir.thana_name || 'Unknown'}`;
+          const stat = groupedStats.get(key);
+          if (stat) {
+            stat.total_accused++;
+            if (acc.accused_type === 'arrested') stat.arrested++;
+            if (acc.accused_type === 'bailed') stat.bailed++;
+          }
+        }
+      });
+
+      const statsArray = Array.from(groupedStats.values())
+        .sort((a, b) => b.total_firs - a.total_firs);
+
+      setStats(statsArray);
+
+      // Calculate summary
+      const uniqueDistricts = new Set(firData.map(f => f.district_name).filter(Boolean));
+      const uniqueThanas = new Set(firData.map(f => f.thana_name).filter(Boolean));
+
+      setSummary({
+        totalFirs: firData.length,
+        totalAccused: accusedData?.length || 0,
+        totalArrested: accusedData?.filter(a => a.accused_type === 'arrested').length || 0,
+        totalBailed: accusedData?.filter(a => a.accused_type === 'bailed').length || 0,
+        totalDistricts: uniqueDistricts.size,
+        totalThanas: uniqueThanas.size
+      });
+
+      toast.success(`Report generated: ${firData.length} FIRs found`);
+
     } catch (error: any) {
-      toast.error('Failed to load report: ' + error.message);
+      console.error('Error:', error);
+      toast.error('Failed to load report');
     } finally {
       setLoading(false);
     }
   };
 
-  const handleExport = async (exportFormat: 'pdf' | 'excel' | 'sheets') => {
-    if (firs.length === 0) {
+  const handleExport = () => {
+    if (stats.length === 0) {
       toast.error('No data to export');
       return;
     }
 
-    setExporting(true);
-    try {
-      const columns = [
-        { header: 'Total FIRs', key: 'totalFirs' },
-        { header: 'Total Accused', key: 'totalAccused' },
-        { header: 'Bail Cases', key: 'bailCases' },
-        { header: 'Custody Cases', key: 'custodyCases' },
-      ];
+    const headers = ['S.No.', 'District', 'Thana', 'Total FIRs', 'Total Accused', 'Arrested', 'Bailed'];
+    const rows = stats.map((stat, index) => [
+      index + 1,
+      stat.district_name,
+      stat.thana_name,
+      stat.total_firs,
+      stat.total_accused,
+      stat.arrested,
+      stat.bailed
+    ]);
 
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-      const { data: userData } = await supabase
-        .from('users')
-        .select('id, full_name')
-        .eq('auth_id', user?.id)
-        .single();
+    const csvContent = [headers, ...rows].map(row => row.join(',')).join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `monthly_crime_report_${selectedMonth}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast.success('Exported successfully!');
+  };
 
-      if (exportFormat === 'pdf') {
-        await exportToPDF({
-          title: `Monthly Report - ${format(new Date(month + '-01'), 'MMMM yyyy')}`,
-          data: [stats],
-          columns,
-          generatedBy: userData?.full_name,
-        });
-      } else if (exportFormat === 'excel') {
-        exportToExcel({
-          filename: `Monthly_Report_${month}`,
-          sheets: [
-            {
-              name: 'Summary',
-              data: [stats],
-              columns,
-            },
-            {
-              name: 'FIRs',
-              data: firs,
-              columns: [
-                { header: 'FIR ID', key: 'id' },
-                { header: 'Crime Type', key: 'modus_operandi_id' },
-                { header: 'Police Station', key: 'police_stations.name' },
-              ],
-            },
-          ],
-        });
-      } else {
-        const result = exportToGoogleSheets([stats], columns, `Monthly_Report_${month}`);
-        toast.info(result.message);
-      }
-
-      if (userData) {
-        await supabase.from('export_logs').insert({
-          user_id: userData.id,
-          export_type: exportFormat.toUpperCase(),
-          report_type: 'Monthly Report',
-          record_count: firs.length,
-        });
-      }
-
-      toast.success('Report exported successfully');
-    } catch (error: any) {
-      toast.error('Export failed: ' + error.message);
-    } finally {
-      setExporting(false);
-    }
+  const getMonthName = (monthStr: string) => {
+    const [year, month] = monthStr.split('-');
+    const date = new Date(parseInt(year), parseInt(month) - 1);
+    return date.toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
   };
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-3xl font-bold text-gray-900">Monthly Report</h1>
-          <p className="text-gray-600 mt-1">Generate monthly crime report</p>
-        </div>
-        <div className="flex gap-2 flex-wrap">
-          <Button
-            onClick={() => handleExport('pdf')}
-            variant="outline"
-            size="sm"
-            disabled={exporting || firs.length === 0}
-          >
-            <FileText className="mr-2 h-4 w-4" />
-            PDF
-          </Button>
-          <Button
-            onClick={() => handleExport('excel')}
-            variant="outline"
-            size="sm"
-            disabled={exporting || firs.length === 0}
-          >
-            <FileSpreadsheet className="mr-2 h-4 w-4" />
-            Excel
-          </Button>
-          <Button
-            onClick={() => handleExport('sheets')}
-            variant="outline"
-            size="sm"
-            disabled={exporting || firs.length === 0}
-          >
-            <FileSpreadsheet className="mr-2 h-4 w-4" />
-            Google Sheets
+    <div className="min-h-screen bg-background p-4 lg:p-6">
+      <div className="max-w-7xl mx-auto space-y-6">
+        {/* Header */}
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <Button variant="outline" size="icon" onClick={() => router.push('/reports')}>
+              <ChevronLeft className="h-4 w-4" />
+            </Button>
+            <div className="p-2 bg-primary/10 rounded-lg">
+              <BarChart3 className="h-6 w-6 text-primary" />
+            </div>
+            <div>
+              <h1 className="text-2xl font-bold">Monthly Crime Report</h1>
+              <p className="text-muted-foreground text-sm">
+                Comprehensive monthly crime analysis
+              </p>
+            </div>
+          </div>
+          <Button onClick={handleExport} variant="outline" disabled={stats.length === 0}>
+            <Download className="mr-2 h-4 w-4" />
+            Export CSV
           </Button>
         </div>
-      </div>
 
-      <Card className="border-2">
-        <CardHeader>
-          <CardTitle>Select Month</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <input
-            type="month"
-            value={month}
-            onChange={(e) => setMonth(e.target.value)}
-            className="border rounded px-3 py-2 w-full max-w-xs"
-          />
-        </CardContent>
-      </Card>
+        {/* Month Selector */}
+        <Card className="border-2">
+          <CardHeader className="bg-muted/30 border-b pb-4">
+            <CardTitle className="text-lg flex items-center gap-2">
+              <Calendar className="h-5 w-5 text-primary" />
+              Select Month
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="pt-6">
+            <div className="flex flex-col sm:flex-row gap-4">
+              <div className="flex-1">
+                <Label>Report Month</Label>
+                <input
+                  type="month"
+                  value={selectedMonth}
+                  onChange={(e) => setSelectedMonth(e.target.value)}
+                  className="w-full mt-1 px-3 py-2 border rounded-lg"
+                />
+              </div>
+              <div className="flex items-end">
+                <Button onClick={loadMonthlyReport} disabled={loading}>
+                  {loading ? (
+                    <RefreshCw className="h-4 w-4 animate-spin mr-2" />
+                  ) : (
+                    <BarChart3 className="h-4 w-4 mr-2" />
+                  )}
+                  Generate Report
+                </Button>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
 
-      {loading ? (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          {Array.from({ length: 4 }).map((_, i) => (
-            <Card key={i} className="border-2">
-              <CardHeader>
-                <Skeleton className="h-4 w-24" />
-              </CardHeader>
-              <CardContent>
-                <Skeleton className="h-8 w-16" />
+        {/* Summary Stats */}
+        {stats.length > 0 && (
+          <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
+            <Card className="bg-blue-50 border-blue-200">
+              <CardContent className="pt-4">
+                <p className="text-xs text-blue-600 font-semibold">Total FIRs</p>
+                <p className="text-2xl font-bold text-blue-700">{summary.totalFirs}</p>
               </CardContent>
             </Card>
-          ))}
-        </div>
-      ) : (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <Card className="border-2">
-            <CardHeader>
-              <CardTitle className="text-base">Total FIRs</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-3xl font-bold">{stats.totalFirs || 0}</p>
-            </CardContent>
-          </Card>
-          <Card className="border-2">
-            <CardHeader>
-              <CardTitle className="text-base">Total Accused</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-3xl font-bold">{stats.totalAccused || 0}</p>
-            </CardContent>
-          </Card>
-          <Card className="border-2">
-            <CardHeader>
-              <CardTitle className="text-base">Bail Cases</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-3xl font-bold">{stats.bailCases || 0}</p>
-            </CardContent>
-          </Card>
-          <Card className="border-2">
-            <CardHeader>
-              <CardTitle className="text-base">Custody Cases</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-3xl font-bold">{stats.custodyCases || 0}</p>
-            </CardContent>
-          </Card>
-        </div>
-      )}
+            <Card className="bg-red-50 border-red-200">
+              <CardContent className="pt-4">
+                <p className="text-xs text-red-600 font-semibold">Total Accused</p>
+                <p className="text-2xl font-bold text-red-700">{summary.totalAccused}</p>
+              </CardContent>
+            </Card>
+            <Card className="bg-orange-50 border-orange-200">
+              <CardContent className="pt-4">
+                <p className="text-xs text-orange-600 font-semibold">Arrested</p>
+                <p className="text-2xl font-bold text-orange-700">{summary.totalArrested}</p>
+              </CardContent>
+            </Card>
+            <Card className="bg-green-50 border-green-200">
+              <CardContent className="pt-4">
+                <p className="text-xs text-green-600 font-semibold">Bailed</p>
+                <p className="text-2xl font-bold text-green-700">{summary.totalBailed}</p>
+              </CardContent>
+            </Card>
+            <Card className="bg-purple-50 border-purple-200">
+              <CardContent className="pt-4">
+                <p className="text-xs text-purple-600 font-semibold">Districts</p>
+                <p className="text-2xl font-bold text-purple-700">{summary.totalDistricts}</p>
+              </CardContent>
+            </Card>
+            <Card className="bg-cyan-50 border-cyan-200">
+              <CardContent className="pt-4">
+                <p className="text-xs text-cyan-600 font-semibold">Thanas</p>
+                <p className="text-2xl font-bold text-cyan-700">{summary.totalThanas}</p>
+              </CardContent>
+            </Card>
+          </div>
+        )}
+
+        {/* Stats Table */}
+        <Card className="border-2">
+          <CardHeader className="bg-muted/30 border-b pb-4">
+            <CardTitle className="text-lg flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <TrendingUp className="h-5 w-5 text-primary" />
+                <span>Crime Statistics - {selectedMonth && getMonthName(selectedMonth)}</span>
+              </div>
+              <Badge variant="secondary">{stats.length} Locations</Badge>
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="p-0">
+            {loading ? (
+              <div className="py-12 text-center">
+                <RefreshCw className="h-8 w-8 animate-spin mx-auto text-primary mb-3" />
+                <p className="text-muted-foreground">Generating report...</p>
+              </div>
+            ) : stats.length === 0 ? (
+              <div className="py-12 text-center">
+                <BarChart3 className="h-12 w-12 mx-auto text-muted-foreground mb-3 opacity-50" />
+                <p className="font-semibold">No Data Found</p>
+                <p className="text-sm text-muted-foreground mt-1">
+                  Select a month and click Generate Report
+                </p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead className="bg-muted/50 border-b-2">
+                    <tr>
+                      <th className="px-4 py-3 text-left text-xs font-bold">S.NO.</th>
+                      <th className="px-4 py-3 text-left text-xs font-bold">DISTRICT</th>
+                      <th className="px-4 py-3 text-left text-xs font-bold">THANA</th>
+                      <th className="px-4 py-3 text-center text-xs font-bold">TOTAL FIRs</th>
+                      <th className="px-4 py-3 text-center text-xs font-bold">ACCUSED</th>
+                      <th className="px-4 py-3 text-center text-xs font-bold">ARRESTED</th>
+                      <th className="px-4 py-3 text-center text-xs font-bold">BAILED</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y">
+                    {stats.map((stat, index) => (
+                      <tr key={index} className="hover:bg-muted/30 transition-colors">
+                        <td className="px-4 py-3 text-sm">{index + 1}</td>
+                        <td className="px-4 py-3 font-medium">{stat.district_name}</td>
+                        <td className="px-4 py-3">
+                          <div className="flex items-center gap-1">
+                            <MapPin className="h-3 w-3 text-muted-foreground" />
+                            {stat.thana_name}
+                          </div>
+                        </td>
+                        <td className="px-4 py-3 text-center">
+                          <Badge className="bg-blue-100 text-blue-700 border-blue-300 border">
+                            {stat.total_firs}
+                          </Badge>
+                        </td>
+                        <td className="px-4 py-3 text-center">
+                          <Badge variant="outline">{stat.total_accused}</Badge>
+                        </td>
+                        <td className="px-4 py-3 text-center">
+                          <Badge className="bg-red-100 text-red-700 border-red-300 border">
+                            {stat.arrested}
+                          </Badge>
+                        </td>
+                        <td className="px-4 py-3 text-center">
+                          <Badge className="bg-green-100 text-green-700 border-green-300 border">
+                            {stat.bailed}
+                          </Badge>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </div>
     </div>
   );
 }

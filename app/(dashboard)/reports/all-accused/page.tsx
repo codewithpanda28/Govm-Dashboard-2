@@ -9,8 +9,8 @@ import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { 
   Search, Download, Users, Eye, Phone, MapPin, 
-  RefreshCw, User, CreditCard, Calendar, FileText,
-  ChevronRight, ExternalLink
+  RefreshCw, User, CreditCard, Calendar, AlertTriangle,
+  ChevronLeft, ExternalLink, FileText, Building, Home
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -25,8 +25,8 @@ interface AccusedRecord {
   aadhaar: string | null;
   full_address: string | null;
   accused_type: string | null;
-  photo_url: string | null;
   created_at: string;
+  // Joined FIR data
   fir_number?: string;
   case_status?: string;
   incident_date?: string;
@@ -36,11 +36,11 @@ interface AccusedRecord {
 
 export default function AllAccusedPage() {
   const router = useRouter();
+  const supabase = createClient();
   const [accused, setAccused] = useState<AccusedRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [exporting, setExporting] = useState(false);
-  const supabase = createClient();
 
   useEffect(() => {
     loadAccused();
@@ -51,12 +51,11 @@ export default function AllAccusedPage() {
     try {
       console.log('📊 Loading accused data...');
       
-      // Step 1: Get accused details
+      // Step 1: Get ALL accused details
       const { data: accusedData, error: accusedError } = await supabase
         .from('accused_details')
         .select('*')
-        .order('created_at', { ascending: false })
-        .limit(500);
+        .order('created_at', { ascending: false });
 
       if (accusedError) {
         console.error('Accused query error:', accusedError);
@@ -64,21 +63,30 @@ export default function AllAccusedPage() {
       }
 
       if (!accusedData || accusedData.length === 0) {
+        console.log('No accused found');
         setAccused([]);
+        toast.info('No accused records found');
         return;
       }
+
+      console.log('✅ Found accused:', accusedData.length);
 
       // Step 2: Get FIR details for all accused
       const firIds = [...new Set(accusedData.map(a => a.fir_id).filter(Boolean))];
       
       let firMap = new Map();
       if (firIds.length > 0) {
-        const { data: firData } = await supabase
+        console.log('📋 Fetching FIR data for', firIds.length, 'FIRs');
+        
+        const { data: firData, error: firError } = await supabase
           .from('fir_records')
           .select('id, fir_number, case_status, incident_date, district_name, thana_name')
           .in('id', firIds);
 
-        if (firData) {
+        if (firError) {
+          console.error('FIR query error:', firError);
+        } else if (firData) {
+          console.log('✅ Got FIR data:', firData.length);
           firData.forEach(fir => {
             firMap.set(fir.id, fir);
           });
@@ -86,10 +94,20 @@ export default function AllAccusedPage() {
       }
 
       // Step 3: Combine data
-      const combinedData = accusedData.map(acc => {
+      const combinedData: AccusedRecord[] = accusedData.map(acc => {
         const fir = firMap.get(acc.fir_id);
         return {
-          ...acc,
+          id: acc.id,
+          fir_id: acc.fir_id,
+          name: acc.name,
+          father_name: acc.father_name,
+          age: acc.age,
+          gender: acc.gender,
+          mobile: acc.mobile,
+          aadhaar: acc.aadhaar,
+          full_address: acc.full_address,
+          accused_type: acc.accused_type,
+          created_at: acc.created_at,
           fir_number: fir?.fir_number || null,
           case_status: fir?.case_status || null,
           incident_date: fir?.incident_date || null,
@@ -99,7 +117,8 @@ export default function AllAccusedPage() {
       });
 
       setAccused(combinedData);
-      console.log('✅ Loaded accused:', combinedData.length);
+      console.log('✅ Loaded total accused:', combinedData.length);
+      toast.success(`Loaded ${combinedData.length} accused records`);
 
     } catch (error: any) {
       console.error('Load error:', error);
@@ -116,16 +135,16 @@ export default function AllAccusedPage() {
     const query = searchQuery.toLowerCase();
     return (
       acc.name?.toLowerCase().includes(query) ||
+      acc.father_name?.toLowerCase().includes(query) ||
       acc.mobile?.includes(query) ||
       acc.aadhaar?.includes(query) ||
       acc.fir_number?.toLowerCase().includes(query) ||
-      acc.father_name?.toLowerCase().includes(query) ||
       acc.district_name?.toLowerCase().includes(query) ||
       acc.thana_name?.toLowerCase().includes(query)
     );
   });
 
-  const handleExport = async () => {
+  const handleExport = () => {
     if (filteredAccused.length === 0) {
       toast.error('No data to export');
       return;
@@ -133,7 +152,22 @@ export default function AllAccusedPage() {
 
     setExporting(true);
     try {
-      const headers = ['S.No.', 'Name', 'Father Name', 'Age', 'Gender', 'Mobile', 'Aadhaar', 'FIR Number', 'District', 'Thana', 'Status', 'Address'];
+      const headers = [
+        'S.No.', 
+        'Name', 
+        'Father Name', 
+        'Age', 
+        'Gender', 
+        'Mobile', 
+        'Aadhaar', 
+        'FIR Number', 
+        'District', 
+        'Thana', 
+        'Status',
+        'Accused Type',
+        'Address'
+      ];
+      
       const rows = filteredAccused.map((acc, index) => [
         index + 1,
         acc.name || '',
@@ -145,20 +179,24 @@ export default function AllAccusedPage() {
         acc.fir_number || '',
         acc.district_name || '',
         acc.thana_name || '',
+        acc.case_status || '',
         acc.accused_type || '',
         acc.full_address || ''
       ]);
 
-      const csvContent = [headers, ...rows].map(row => row.join(',')).join('\n');
-      const blob = new Blob([csvContent], { type: 'text/csv' });
+      const csvContent = [headers, ...rows]
+        .map(row => row.map(cell => `"${cell}"`).join(','))
+        .join('\n');
+      
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `accused_data_${new Date().toISOString().split('T')[0]}.csv`;
+      a.download = `accused_database_${new Date().toISOString().split('T')[0]}.csv`;
       a.click();
       URL.revokeObjectURL(url);
 
-      toast.success('Exported successfully!');
+      toast.success(`Exported ${filteredAccused.length} records!`);
     } catch (error: any) {
       toast.error('Export failed: ' + error.message);
     } finally {
@@ -202,13 +240,24 @@ export default function AllAccusedPage() {
     return config[type?.toLowerCase() || 'unknown'] || config.unknown;
   };
 
-  // ✅ Navigate to FIR page
-  const handleViewFIR = (firId: number) => {
-    if (!firId) {
-      toast.error('FIR not found for this accused');
-      return;
-    }
-    router.push(`/fir/${firId}`);
+  const formatDate = (dateStr: string | null) => {
+    if (!dateStr) return '-';
+    return new Date(dateStr).toLocaleDateString('en-IN', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric'
+    });
+  };
+
+  // Calculate stats
+  const stats = {
+    total: accused.length,
+    arrested: accused.filter(a => a.accused_type === 'arrested').length,
+    bailed: accused.filter(a => a.accused_type === 'bailed').length,
+    absconding: accused.filter(a => a.accused_type === 'absconding').length,
+    unknown: accused.filter(a => !a.accused_type || a.accused_type === 'unknown' || a.accused_type === 'known').length,
+    male: accused.filter(a => a.gender?.toLowerCase() === 'male').length,
+    female: accused.filter(a => a.gender?.toLowerCase() === 'female').length,
   };
 
   return (
@@ -217,13 +266,16 @@ export default function AllAccusedPage() {
         {/* Header */}
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
           <div className="flex items-center gap-3">
+            <Button variant="outline" size="icon" onClick={() => router.push('/reports')}>
+              <ChevronLeft className="h-4 w-4" />
+            </Button>
             <div className="p-2 bg-primary/10 rounded-lg">
               <Users className="h-6 w-6 text-primary" />
             </div>
             <div>
               <h1 className="text-2xl font-bold">Accused Database</h1>
               <p className="text-muted-foreground text-sm">
-                Search and view all accused persons with their FIR details
+                Complete database of all accused persons with FIR details
               </p>
             </div>
           </div>
@@ -235,7 +287,7 @@ export default function AllAccusedPage() {
               disabled={exporting || filteredAccused.length === 0}
             >
               <Download className="mr-2 h-4 w-4" />
-              Export CSV
+              {exporting ? 'Exporting...' : 'Export CSV'}
             </Button>
             <Button
               onClick={loadAccused}
@@ -261,56 +313,90 @@ export default function AllAccusedPage() {
             <div className="relative">
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input
-                placeholder="Search by name, mobile, aadhaar, FIR number, district, or thana..."
+                placeholder="Search by name, father name, mobile, aadhaar, FIR number, district, or thana..."
                 className="pl-10"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
               />
             </div>
+            <p className="text-xs text-muted-foreground mt-2">
+              Showing {filteredAccused.length} of {accused.length} records
+            </p>
           </CardContent>
         </Card>
 
         {/* Summary Stats */}
-        {/* <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-4">
           <Card className="bg-blue-50 border-blue-200">
             <CardContent className="pt-4">
+              <div className="flex items-center justify-between mb-1">
+                <Users className="h-4 w-4 text-blue-600" />
+                <p className="text-2xl font-bold text-blue-700">{stats.total}</p>
+              </div>
               <p className="text-xs text-blue-600 font-semibold">Total Accused</p>
-              <p className="text-2xl font-bold text-blue-700">{accused.length}</p>
             </CardContent>
           </Card>
+          
           <Card className="bg-red-50 border-red-200">
             <CardContent className="pt-4">
+              <div className="flex items-center justify-between mb-1">
+                <AlertTriangle className="h-4 w-4 text-red-600" />
+                <p className="text-2xl font-bold text-red-700">{stats.arrested}</p>
+              </div>
               <p className="text-xs text-red-600 font-semibold">Arrested</p>
-              <p className="text-2xl font-bold text-red-700">
-                {accused.filter(a => a.accused_type === 'arrested').length}
-              </p>
             </CardContent>
           </Card>
+
           <Card className="bg-green-50 border-green-200">
             <CardContent className="pt-4">
+              <div className="flex items-center justify-between mb-1">
+                <FileText className="h-4 w-4 text-green-600" />
+                <p className="text-2xl font-bold text-green-700">{stats.bailed}</p>
+              </div>
               <p className="text-xs text-green-600 font-semibold">Bailed</p>
-              <p className="text-2xl font-bold text-green-700">
-                {accused.filter(a => a.accused_type === 'bailed').length}
-              </p>
             </CardContent>
           </Card>
+
           <Card className="bg-orange-50 border-orange-200">
             <CardContent className="pt-4">
+              <div className="flex items-center justify-between mb-1">
+                <AlertTriangle className="h-4 w-4 text-orange-600" />
+                <p className="text-2xl font-bold text-orange-700">{stats.absconding}</p>
+              </div>
               <p className="text-xs text-orange-600 font-semibold">Absconding</p>
-              <p className="text-2xl font-bold text-orange-700">
-                {accused.filter(a => a.accused_type === 'absconding').length}
-              </p>
             </CardContent>
           </Card>
+
           <Card className="bg-gray-50 border-gray-200">
             <CardContent className="pt-4">
-              <p className="text-xs text-gray-600 font-semibold">Unknown</p>
-              <p className="text-2xl font-bold text-gray-700">
-                {accused.filter(a => !a.accused_type || a.accused_type === 'unknown').length}
-              </p>
+              <div className="flex items-center justify-between mb-1">
+                <User className="h-4 w-4 text-gray-600" />
+                <p className="text-2xl font-bold text-gray-700">{stats.unknown}</p>
+              </div>
+              <p className="text-xs text-gray-600 font-semibold">Other</p>
             </CardContent>
           </Card>
-        </div> */}
+
+          <Card className="bg-indigo-50 border-indigo-200">
+            <CardContent className="pt-4">
+              <div className="flex items-center justify-between mb-1">
+                <User className="h-4 w-4 text-indigo-600" />
+                <p className="text-2xl font-bold text-indigo-700">{stats.male}</p>
+              </div>
+              <p className="text-xs text-indigo-600 font-semibold">Male</p>
+            </CardContent>
+          </Card>
+
+          <Card className="bg-pink-50 border-pink-200">
+            <CardContent className="pt-4">
+              <div className="flex items-center justify-between mb-1">
+                <User className="h-4 w-4 text-pink-600" />
+                <p className="text-2xl font-bold text-pink-700">{stats.female}</p>
+              </div>
+              <p className="text-xs text-pink-600 font-semibold">Female</p>
+            </CardContent>
+          </Card>
+        </div>
 
         {/* Table Card */}
         <Card className="border-2">
@@ -327,15 +413,25 @@ export default function AllAccusedPage() {
             {loading ? (
               <div className="py-12 text-center">
                 <RefreshCw className="h-8 w-8 animate-spin mx-auto text-primary mb-3" />
-                <p className="text-muted-foreground">Loading records...</p>
+                <p className="text-muted-foreground">Loading accused records...</p>
+                <p className="text-xs text-muted-foreground mt-1">Please wait...</p>
               </div>
             ) : filteredAccused.length === 0 ? (
               <div className="py-12 text-center">
                 <Users className="h-12 w-12 mx-auto text-muted-foreground mb-3 opacity-50" />
-                <p className="font-semibold">No Accused Found</p>
+                <p className="font-semibold text-lg">No Accused Found</p>
                 <p className="text-sm text-muted-foreground mt-1">
-                  {searchQuery ? 'Try a different search term' : 'No records available'}
+                  {searchQuery ? 'Try a different search term' : 'No records available in database'}
                 </p>
+                {searchQuery && (
+                  <Button 
+                    variant="outline" 
+                    className="mt-4"
+                    onClick={() => setSearchQuery('')}
+                  >
+                    Clear Search
+                  </Button>
+                )}
               </div>
             ) : (
               <div className="overflow-x-auto">
@@ -359,19 +455,23 @@ export default function AllAccusedPage() {
                         <tr 
                           key={acc.id} 
                           className="hover:bg-muted/30 transition-colors cursor-pointer"
-                          onClick={() => handleViewFIR(acc.fir_id)}
+                          onClick={() => router.push(`/fir/${acc.fir_id}`)}
                         >
                           {/* S.No. */}
-                          <td className="px-4 py-3 text-sm">{index + 1}</td>
+                          <td className="px-4 py-3 text-sm font-medium text-muted-foreground">
+                            {index + 1}
+                          </td>
                           
                           {/* Name & Father */}
                           <td className="px-4 py-3">
                             <div className="flex items-center gap-3">
-                              <div className="h-9 w-9 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
-                                <User className="h-4 w-4 text-primary" />
+                              <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
+                                <User className="h-5 w-5 text-primary" />
                               </div>
                               <div>
-                                <p className="font-medium">{acc.name || 'Unknown'}</p>
+                                <p className="font-medium text-sm">
+                                  {acc.name || 'Unknown'}
+                                </p>
                                 {acc.father_name && (
                                   <p className="text-xs text-muted-foreground">
                                     S/o {acc.father_name}
@@ -383,13 +483,22 @@ export default function AllAccusedPage() {
                           
                           {/* Age/Gender */}
                           <td className="px-4 py-3">
-                            <div className="flex items-center gap-1">
-                              <span className="text-sm">{acc.age ? `${acc.age} yrs` : '-'}</span>
-                              {acc.gender && (
-                                <Badge variant="outline" className="text-xs">
-                                  {acc.gender}
-                                </Badge>
-                              )}
+                            <div className="space-y-1">
+                              <div className="flex items-center gap-2">
+                                {acc.age && (
+                                  <span className="text-sm font-medium">
+                                    {acc.age} yrs
+                                  </span>
+                                )}
+                                {acc.gender && (
+                                  <Badge 
+                                    variant="outline" 
+                                    className="text-xs"
+                                  >
+                                    {acc.gender}
+                                  </Badge>
+                                )}
+                              </div>
                             </div>
                           </td>
                           
@@ -398,16 +507,16 @@ export default function AllAccusedPage() {
                             <div className="space-y-1">
                               {acc.mobile ? (
                                 <div className="flex items-center gap-1 text-sm">
-                                  <Phone className="h-3 w-3 text-green-600" />
+                                  <Phone className="h-3 w-3 text-green-600 flex-shrink-0" />
                                   <span className="font-mono">{acc.mobile}</span>
                                 </div>
                               ) : (
-                                <span className="text-muted-foreground text-sm">-</span>
+                                <span className="text-muted-foreground text-xs">No mobile</span>
                               )}
                               {acc.aadhaar && (
                                 <div className="flex items-center gap-1 text-xs text-muted-foreground">
-                                  <CreditCard className="h-3 w-3" />
-                                  ****{acc.aadhaar.slice(-4)}
+                                  <CreditCard className="h-3 w-3 flex-shrink-0" />
+                                  <span className="font-mono">****{acc.aadhaar.slice(-4)}</span>
                                 </div>
                               )}
                             </div>
@@ -417,7 +526,7 @@ export default function AllAccusedPage() {
                           <td className="px-4 py-3">
                             {acc.fir_number ? (
                               <div className="space-y-1">
-                                <Badge className="bg-blue-100 text-blue-700 border-blue-300 border font-mono">
+                                <Badge className="bg-blue-100 text-blue-700 border-blue-300 border font-mono text-xs">
                                   {acc.fir_number}
                                 </Badge>
                                 {acc.case_status && (
@@ -427,24 +536,28 @@ export default function AllAccusedPage() {
                                 )}
                               </div>
                             ) : (
-                              <span className="text-muted-foreground">-</span>
+                              <span className="text-muted-foreground text-xs">No FIR</span>
                             )}
                           </td>
 
                           {/* Location */}
                           <td className="px-4 py-3">
                             <div className="space-y-1">
-                              {acc.district_name && (
-                                <p className="text-sm font-medium">{acc.district_name}</p>
-                              )}
-                              {acc.thana_name && (
-                                <p className="text-xs text-muted-foreground flex items-center gap-1">
-                                  <MapPin className="h-3 w-3" />
-                                  {acc.thana_name}
-                                </p>
-                              )}
-                              {!acc.district_name && !acc.thana_name && (
-                                <span className="text-muted-foreground">-</span>
+                              {acc.district_name ? (
+                                <>
+                                  <div className="flex items-center gap-1 text-sm">
+                                    <Building className="h-3 w-3 text-muted-foreground flex-shrink-0" />
+                                    <span>{acc.district_name}</span>
+                                  </div>
+                                  {acc.thana_name && (
+                                    <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                                      <MapPin className="h-3 w-3 flex-shrink-0" />
+                                      <span>{acc.thana_name}</span>
+                                    </div>
+                                  )}
+                                </>
+                              ) : (
+                                <span className="text-muted-foreground text-xs">No location</span>
                               )}
                             </div>
                           </td>
@@ -452,20 +565,20 @@ export default function AllAccusedPage() {
                           {/* Status */}
                           <td className="px-4 py-3 text-center">
                             <Badge 
-                              className={`${typeConfig.bg} ${typeConfig.text} ${typeConfig.border} border`}
+                              className={`${typeConfig.bg} ${typeConfig.text} ${typeConfig.border} border text-xs font-semibold`}
                             >
                               {typeConfig.label}
                             </Badge>
                           </td>
                           
-                          {/* Actions - View FIR Button */}
+                          {/* Actions */}
                           <td className="px-4 py-3 text-right">
                             <Button
                               size="sm"
                               variant="outline"
                               onClick={(e) => {
                                 e.stopPropagation();
-                                handleViewFIR(acc.fir_id);
+                                router.push(`/fir/${acc.fir_id}`);
                               }}
                               className="gap-1"
                             >
@@ -483,6 +596,24 @@ export default function AllAccusedPage() {
             )}
           </CardContent>
         </Card>
+
+        {/* Footer Info */}
+        {accused.length > 0 && (
+          <Card className="bg-muted/30 border-2">
+            <CardContent className="pt-6">
+              <div className="flex flex-col sm:flex-row items-center justify-between gap-4 text-sm text-muted-foreground">
+                <div className="flex items-center gap-2">
+                  <Calendar className="h-4 w-4" />
+                  <span>Last updated: {formatDate(accused[0]?.created_at)}</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <FileText className="h-4 w-4" />
+                  <span>Click on any row to view complete FIR details</span>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
       </div>
     </div>
   );

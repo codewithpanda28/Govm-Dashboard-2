@@ -34,41 +34,46 @@ export default function LoginPage() {
       if (authData.user) {
         const { data: userData, error: userError } = await supabase
           .from('users')
-          .select('id, role, is_active')
+          .select('id, role, is_active, full_name')
           .eq('auth_id', authData.user.id)
           .single();
 
         if (userError) {
           console.error('User data error:', userError);
-          throw new Error('User account not found. Please contact_number administrator.');
+          throw new Error('User account not found. Please contact administrator.');
         }
 
         if (!userData) {
           await supabase.auth.signOut();
-          throw new Error('User account not found. Please contact_number administrator.');
+          throw new Error('User account not found. Please contact administrator.');
         }
 
         if (!userData.is_active) {
           await supabase.auth.signOut();
-          toast.error('Your account is deactivated. Please contact_number administrator.');
+          toast.error('Your account is deactivated. Please contact administrator.');
           return;
         }
 
         const role = userData.role;
+        console.log('User role:', role); // Debug log
 
+        // Data entry roles - redirect to different portal
         if (role === 'station_officer' || role === 'data_operator') {
           await supabase.auth.signOut();
           toast.error('Access denied. Use Data Entry Portal.');
           return;
         }
 
-        if (role !== 'super_admin' && role !== 'district_admin' && role !== 'viewer') {
+        // ✅ FIXED: Added 'admin' to allowed roles
+        const allowedRoles = ['super_admin', 'district_admin', 'admin', 'viewer'];
+        
+        if (!allowedRoles.includes(role)) {
           await supabase.auth.signOut();
           toast.error('Access denied. Insufficient permissions.');
           return;
         }
 
-        // Log login
+        // Log login (optional - don't block if fails)
         try {
           await supabase.from('audit_logs').insert({
             user_id: userData.id,
@@ -78,10 +83,9 @@ export default function LoginPage() {
           });
         } catch (logError) {
           console.error('Failed to log login:', logError);
-          // Don't block login if logging fails
         }
 
-        toast.success('Login successful!');
+        toast.success(`Welcome, ${userData.full_name || 'Admin'}!`);
         router.push('/dashboard');
         router.refresh();
       }

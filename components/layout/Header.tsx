@@ -86,8 +86,8 @@ export default function Header() {
   };
 
   return (
-    <header className="sticky top-0 z-30 flex h-16 items-center justify-between border-b-2 border-amber-300 bg-gradient-to-r from-amber-400 to-orange-400 px-4 shadow-lg md:px-6">
-      <div className="flex flex-1 items-center gap-2 md:gap-4">
+    <header className="">
+      {/* <div className="flex flex-1 items-center gap-2 md:gap-4">
         <div className="relative hidden flex-1 max-w-md md:block">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-amber-700" />
           <Input
@@ -203,7 +203,7 @@ export default function Header() {
             )}
           </div>
         </DialogContent>
-      </Dialog>
+      </Dialog> */}
     </header>
   );
 }
