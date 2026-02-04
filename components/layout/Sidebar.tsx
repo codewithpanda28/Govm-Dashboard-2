@@ -45,6 +45,7 @@ const settingsItems = [
   { icon: Home, label: 'Manage Thana', href: '/settings/thanas' },
   { icon: UserCog, label: 'Manage IO', href: '/settings/ios' },
   { icon: Gavel, label: 'Manage Court', href: '/settings/courts' },
+  { icon: Users, label: 'Manage Crime', href: '/settings/crime' },
   { icon: Users, label: 'Manage Users', href: '/settings/users' },
 ];
 
@@ -195,7 +196,7 @@ export default function Sidebar() {
         )}
 
         {/* Super Admin Section */}
-        {userRole === 'super_admin' && (
+        {/* {userRole === 'super_admin' && (
           <>
             <div className="my-4 border-t-2 border-amber-200" />
             <div className="mb-4">
@@ -224,7 +225,7 @@ export default function Sidebar() {
               })}
             </div>
           </>
-        )}
+        )} */}
 
         {/* User Section */}
         <div className="my-4 border-t-2 border-amber-200" />

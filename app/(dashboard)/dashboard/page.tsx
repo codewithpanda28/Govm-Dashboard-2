@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
+import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -10,14 +11,45 @@ import {
   Building, MapPin, Gavel, User, Shield,
   Train, AlertTriangle, CheckCircle, Clock,
   ChevronRight, BarChart3, TrendingUp,
-  Home, Activity
+  Home, Activity, X, ExternalLink, Eye
 } from 'lucide-react';
 import { toast } from 'sonner';
 
+// Modal Component for showing data
+const DataModal = ({ isOpen, onClose, title, icon: Icon, children }: any) => {
+  if (!isOpen) return null;
+  
+  return (
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+      <div className="bg-white dark:bg-gray-900 rounded-lg max-w-4xl w-full max-h-[80vh] overflow-hidden">
+        <div className="p-4 border-b flex items-center justify-between bg-muted/30">
+          <div className="flex items-center gap-2">
+            <Icon className="h-5 w-5 text-primary" />
+            <h2 className="text-lg font-bold">{title}</h2>
+          </div>
+          <Button variant="ghost" size="icon" onClick={onClose}>
+            <X className="h-4 w-4" />
+          </Button>
+        </div>
+        <div className="p-4 overflow-y-auto max-h-[calc(80vh-120px)]">
+          {children}
+        </div>
+      </div>
+    </div>
+  );
+};
+
 export default function DashboardPage() {
+  const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<string>('');
+  
+  // Modal states
+  const [modalOpen, setModalOpen] = useState(false);
+  const [modalType, setModalType] = useState('');
+  const [modalData, setModalData] = useState<any[]>([]);
+  const [modalLoading, setModalLoading] = useState(false);
   
   const [stats, setStats] = useState({
     totalDistricts: 0,
@@ -96,7 +128,7 @@ export default function DashboardPage() {
         totalCustody: totalCustody || 0,
       });
 
-      // 8. Top Districts
+      // 8. Top Districts & Thanas
       const { data: allFirs } = await supabase
         .from('fir_records')
         .select('id, district_name, thana_name');
@@ -182,6 +214,133 @@ export default function DashboardPage() {
     }
   }, [supabase]);
 
+  // Load detailed data when card is clicked
+  const loadDetailedData = async (type: string) => {
+    console.log('🔍 Loading detailed data for:', type);
+    setModalLoading(true);
+    setModalType(type);
+    setModalOpen(true);
+    
+    try {
+      let data: any[] = [];
+      
+      switch(type) {
+        case 'districts':
+          const { data: districtData } = await supabase
+            .from('fir_records')
+            .select('district_name')
+            .not('district_name', 'is', null);
+          
+          const districtCounts = new Map<string, number>();
+          districtData?.forEach(d => {
+            districtCounts.set(d.district_name, (districtCounts.get(d.district_name) || 0) + 1);
+          });
+          
+          data = Array.from(districtCounts.entries())
+            .map(([name, count]) => ({ name, fir_count: count }))
+            .sort((a, b) => b.fir_count - a.fir_count);
+          break;
+          
+        case 'thanas':
+          const { data: thanaData } = await supabase
+            .from('fir_records')
+            .select('thana_name, district_name')
+            .not('thana_name', 'is', null);
+          
+          const thanaCounts = new Map<string, {count: number, district: string}>();
+          thanaData?.forEach(t => {
+            const key = t.thana_name;
+            if (thanaCounts.has(key)) {
+              thanaCounts.get(key)!.count++;
+            } else {
+              thanaCounts.set(key, { count: 1, district: t.district_name || 'Unknown' });
+            }
+          });
+          
+          data = Array.from(thanaCounts.entries())
+            .map(([name, info]) => ({ 
+              name, 
+              district: info.district,
+              fir_count: info.count 
+            }))
+            .sort((a, b) => b.fir_count - a.fir_count);
+          break;
+          
+        case 'firs':
+          const { data: firsData } = await supabase
+            .from('fir_records')
+            .select('*')
+            .order('created_at', { ascending: false });
+          data = firsData || [];
+          break;
+          
+        case 'accused':
+          const { data: accusedData } = await supabase
+            .from('accused_details')
+            .select(`
+              *,
+              fir_records(fir_number, district_name, thana_name)
+            `)
+            .order('created_at', { ascending: false });
+          data = accusedData || [];
+          break;
+          
+        case 'bailers':
+          const { data: bailersData, error: bailersError } = await supabase
+            .from('bailer_details')
+            .select('*')
+            .order('created_at', { ascending: false });
+          
+          if (bailersError) {
+            console.error('❌ Bailers Error:', bailersError);
+            toast.error('Failed to load bailers: ' + bailersError.message);
+          }
+          
+          console.log('✅ Bailers Data:', bailersData);
+          data = bailersData || [];
+          break;
+          
+        case 'bailed':
+          const { data: bailedData } = await supabase
+            .from('accused_details')
+            .select(`
+              *,
+              fir_records(fir_number, district_name, thana_name)
+            `)
+            .eq('accused_type', 'bailed')
+            .order('created_at', { ascending: false });
+          data = bailedData || [];
+          break;
+          
+        case 'custody':
+          const { data: custodyData } = await supabase
+            .from('accused_details')
+            .select(`
+              *,
+              fir_records(fir_number, district_name, thana_name)
+            `)
+            .eq('accused_type', 'arrested')
+            .order('created_at', { ascending: false });
+          data = custodyData || [];
+          break;
+      }
+      
+      setModalData(data);
+      console.log('✅ Loaded', data.length, 'records for', type);
+    } catch (err: any) {
+      console.error('❌ Error loading data:', err);
+      toast.error('Failed to load data');
+    } finally {
+      setModalLoading(false);
+    }
+  };
+
+  // Handle card click
+  const handleCardClick = (card: any) => {
+    console.log('🎯 Card clicked:', card.id);
+    loadDetailedData(card.id);
+  };
+
   useEffect(() => {
     loadDashboardData();
   }, [loadDashboardData]);
@@ -236,6 +395,101 @@ export default function DashboardPage() {
     };
   };
 
+  // Stat cards configuration - ALL OPEN MODAL (NO NAVIGATION)
+  const statCards = [
+    {
+      id: 'districts',
+      icon: Building,
+      iconColor: 'text-blue-600',
+      bgColor: 'bg-blue-50/50',
+      borderColor: 'border-blue-200',
+      hoverBg: 'hover:bg-blue-50',
+      hoverBorder: 'hover:border-blue-400',
+      value: stats.totalDistricts,
+      label: 'Total Districts',
+      trend: TrendingUp,
+      trendColor: 'text-green-600'
+    },
+    {
+      id: 'thanas',
+      icon: MapPin,
+      iconColor: 'text-purple-600',
+      bgColor: 'bg-purple-50/50',
+      borderColor: 'border-purple-200',
+      hoverBg: 'hover:bg-purple-50',
+      hoverBorder: 'hover:border-purple-400',
+      value: stats.totalThanas,
+      label: 'Total Thanas',
+      trend: TrendingUp,
+      trendColor: 'text-green-600'
+    },
+    {
+      id: 'firs',
+      icon: FileText,
+      iconColor: 'text-orange-600',
+      bgColor: 'bg-orange-50/50',
+      borderColor: 'border-orange-200',
+      hoverBg: 'hover:bg-orange-50',
+      hoverBorder: 'hover:border-orange-400',
+      value: stats.totalFirs,
+      label: 'Total FIRs',
+      trend: Activity,
+      trendColor: 'text-orange-600'
+    },
+    {
+      id: 'accused',
+      icon: Users,
+      iconColor: 'text-red-600',
+      bgColor: 'bg-red-50/50',
+      borderColor: 'border-red-200',
+      hoverBg: 'hover:bg-red-50',
+      hoverBorder: 'hover:border-red-400',
+      value: stats.totalAccused,
+      label: 'Total Accused',
+      trend: AlertTriangle,
+      trendColor: 'text-red-600'
+    },
+    {
+      id: 'bailers',
+      icon: User,
+      iconColor: 'text-indigo-600',
+      bgColor: 'bg-indigo-50/50',
+      borderColor: 'border-indigo-200',
+      hoverBg: 'hover:bg-indigo-50',
+      hoverBorder: 'hover:border-indigo-400',
+      value: stats.totalBailers,
+      label: 'Total Bailers',
+      trend: Shield,
+      trendColor: 'text-indigo-600'
+    },
+    {
+      id: 'bailed',
+      icon: Scale,
+      iconColor: 'text-green-600',
+      bgColor: 'bg-green-50/50',
+      borderColor: 'border-green-200',
+      hoverBg: 'hover:bg-green-50',
+      hoverBorder: 'hover:border-green-400',
+      value: stats.totalBailed,
+      label: 'Total Bailed',
+      trend: CheckCircle,
+      trendColor: 'text-green-600'
+    },
+    {
+      id: 'custody',
+      icon: Lock,
+      iconColor: 'text-amber-600',
+      bgColor: 'bg-amber-50/50',
+      borderColor: 'border-amber-200',
+      hoverBg: 'hover:bg-amber-50',
+      hoverBorder: 'hover:border-amber-400',
+      value: stats.totalCustody,
+      label: 'In Custody',
+      trend: Clock,
+      trendColor: 'text-amber-600'
+    }
+  ];
+
   return (
     <div className="min-h-screen bg-background p-4 lg:p-6">
       <div className="max-w-7xl mx-auto">
@@ -285,234 +539,409 @@ export default function DashboardPage() {
           </Card>
         )}
 
-        {/* Stats Grid */}
+        {/* Stats Grid - CLICKABLE */}
         <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-4 mb-6">
-          {/* Districts Card */}
-          <Card className="border-2">
-            <CardContent className="p-4">
-              <div className="flex items-center justify-between mb-2">
-                <Building className="h-5 w-5 text-blue-600" />
-                <TrendingUp className="h-4 w-4 text-green-600" />
+          {statCards.map(card => {
+            const Icon = card.icon;
+            const Trend = card.trend;
+            
+            return (
+              <div
+                key={card.id}
+                className={`
+                  relative cursor-pointer transition-all duration-200 transform hover:scale-105
+                  ${card.bgColor} ${card.hoverBg} 
+                  border-2 ${card.borderColor} ${card.hoverBorder}
+                  rounded-lg shadow-sm hover:shadow-md group
+                `}
+                onClick={() => handleCardClick(card)}
+                role="button"
+                tabIndex={0}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    handleCardClick(card);
+                  }
+                }}
+              >
+                <div className="p-4">
+                  <div className="flex items-center justify-between mb-2">
+                    <Icon className={`h-5 w-5 ${card.iconColor}`} />
+                    <div className="flex items-center gap-1">
+                      <Trend className={`h-4 w-4 ${card.trendColor}`} />
+                      <Eye className="h-3 w-3 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
+                    </div>
+                  </div>
+                  <p className="text-2xl font-bold">
+                    {loading ? (
+                      <span className="inline-block w-12 h-6 bg-muted animate-pulse rounded"></span>
+                    ) : card.value}
+                  </p>
+                  <p className="text-xs text-muted-foreground font-medium mt-1">{card.label}</p>
+                  <div className="mt-2 text-xs text-primary opacity-0 group-hover:opacity-100 transition-opacity">
+                    Click to view details →
+                  </div>
+                </div>
               </div>
-              <p className="text-2xl font-bold">
-                {loading ? (
-                  <span className="inline-block w-12 h-6 bg-muted animate-pulse rounded"></span>
-                ) : stats.totalDistricts}
-              </p>
-              <p className="text-xs text-muted-foreground font-medium mt-1">Total Districts</p>
-            </CardContent>
-          </Card>
-
-          {/* Thanas Card */}
-          <Card className="border-2">
-            <CardContent className="p-4">
-              <div className="flex items-center justify-between mb-2">
-                <MapPin className="h-5 w-5 text-purple-600" />
-                <TrendingUp className="h-4 w-4 text-green-600" />
-              </div>
-              <p className="text-2xl font-bold">
-                {loading ? (
-                  <span className="inline-block w-12 h-6 bg-muted animate-pulse rounded"></span>
-                ) : stats.totalThanas}
-              </p>
-              <p className="text-xs text-muted-foreground font-medium mt-1">Total Thanas</p>
-            </CardContent>
-          </Card>
-
-          {/* FIRs Card */}
-          <Card className="border-2">
-            <CardContent className="p-4">
-              <div className="flex items-center justify-between mb-2">
-                <FileText className="h-5 w-5 text-orange-600" />
-                <Activity className="h-4 w-4 text-orange-600" />
-              </div>
-              <p className="text-2xl font-bold">
-                {loading ? (
-                  <span className="inline-block w-12 h-6 bg-muted animate-pulse rounded"></span>
-                ) : stats.totalFirs}
-              </p>
-              <p className="text-xs text-muted-foreground font-medium mt-1">Total FIRs</p>
-            </CardContent>
-          </Card>
-
-          {/* Accused Card */}
-          <Card className="border-2">
-            <CardContent className="p-4">
-              <div className="flex items-center justify-between mb-2">
-                <Users className="h-5 w-5 text-red-600" />
-                <AlertTriangle className="h-4 w-4 text-red-600" />
-              </div>
-              <p className="text-2xl font-bold">
-                {loading ? (
-                  <span className="inline-block w-12 h-6 bg-muted animate-pulse rounded"></span>
-                ) : stats.totalAccused}
-              </p>
-              <p className="text-xs text-muted-foreground font-medium mt-1">Total Accused</p>
-            </CardContent>
-          </Card>
-
-          {/* Bailers Card */}
-          <Card className="border-2">
-            <CardContent className="p-4">
-              <div className="flex items-center justify-between mb-2">
-                <User className="h-5 w-5 text-indigo-600" />
-                <Shield className="h-4 w-4 text-indigo-600" />
-              </div>
-              <p className="text-2xl font-bold">
-                {loading ? (
-                  <span className="inline-block w-12 h-6 bg-muted animate-pulse rounded"></span>
-                ) : stats.totalBailers}
-              </p>
-              <p className="text-xs text-muted-foreground font-medium mt-1">Total Bailers</p>
-            </CardContent>
-          </Card>
-
-          {/* Bailed Card */}
-          <Card className="border-2">
-            <CardContent className="p-4">
-              <div className="flex items-center justify-between mb-2">
-                <Scale className="h-5 w-5 text-green-600" />
-                <CheckCircle className="h-4 w-4 text-green-600" />
-              </div>
-              <p className="text-2xl font-bold">
-                {loading ? (
-                  <span className="inline-block w-12 h-6 bg-muted animate-pulse rounded"></span>
-                ) : stats.totalBailed}
-              </p>
-              <p className="text-xs text-muted-foreground font-medium mt-1">Total Bailed</p>
-            </CardContent>
-          </Card>
-
-          {/* Custody Card */}
-          <Card className="border-2">
-            <CardContent className="p-4">
-              <div className="flex items-center justify-between mb-2">
-                <Lock className="h-5 w-5 text-amber-600" />
-                <Clock className="h-4 w-4 text-amber-600" />
-              </div>
-              <p className="text-2xl font-bold">
-                {loading ? (
-                  <span className="inline-block w-12 h-6 bg-muted animate-pulse rounded"></span>
-                ) : stats.totalCustody}
-              </p>
-              <p className="text-xs text-muted-foreground font-medium mt-1">In Custody</p>
-            </CardContent>
-          </Card>
+            );
+          })}
         </div>
+
+        {/* Data Modal */}
+        <DataModal 
+          isOpen={modalOpen} 
+          onClose={() => setModalOpen(false)}
+          title={
+            modalType === 'districts' ? 'All Districts' :
+            modalType === 'thanas' ? 'All Thanas' :
+            modalType === 'firs' ? 'All FIR Records' :
+            modalType === 'accused' ? 'All Accused Persons' :
+            modalType === 'bailers' ? 'All Bailers' :
+            modalType === 'bailed' ? 'Bailed Accused' :
+            modalType === 'custody' ? 'Accused in Custody' : 'Data'
+          }
+          icon={
+            modalType === 'districts' ? Building :
+            modalType === 'thanas' ? MapPin :
+            modalType === 'firs' ? FileText :
+            modalType === 'accused' ? Users :
+            modalType === 'bailers' ? User :
+            modalType === 'bailed' ? Scale :
+            modalType === 'custody' ? Lock : FileText
+          }
+        >
+          {modalLoading ? (
+            <div className="py-12 text-center">
+              <RefreshCw className="h-8 w-8 animate-spin mx-auto text-primary mb-3" />
+              <p className="text-muted-foreground">Loading data...</p>
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              {/* Districts Table */}
+              {modalType === 'districts' && (
+                <>
+                  {modalData.length === 0 ? (
+                    <div className="py-8 text-center text-muted-foreground">
+                      <Building className="h-12 w-12 mx-auto mb-3 opacity-50" />
+                      <p>No districts found</p>
+                    </div>
+                  ) : (
+                    <table className="w-full">
+                      <thead className="bg-muted/50 border-b-2">
+                        <tr>
+                          <th className="px-4 py-3 text-left text-xs font-bold">S.NO.</th>
+                          <th className="px-4 py-3 text-left text-xs font-bold">DISTRICT NAME</th>
+                          <th className="px-4 py-3 text-right text-xs font-bold">FIR COUNT</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y">
+                        {modalData.map((item: any, idx) => (
+                          <tr key={idx} className="hover:bg-muted/30">
+                            <td className="px-4 py-3 text-sm">{idx + 1}</td>
+                            <td className="px-4 py-3 font-medium">{item.name}</td>
+                            <td className="px-4 py-3 text-right">
+                              <Badge>{item.fir_count}</Badge>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </>
+              )}
+              
+              {/* Thanas Table */}
+              {modalType === 'thanas' && (
+                <>
+                  {modalData.length === 0 ? (
+                    <div className="py-8 text-center text-muted-foreground">
+                      <MapPin className="h-12 w-12 mx-auto mb-3 opacity-50" />
+                      <p>No thanas found</p>
+                    </div>
+                  ) : (
+                    <table className="w-full">
+                      <thead className="bg-muted/50 border-b-2">
+                        <tr>
+                          <th className="px-4 py-3 text-left text-xs font-bold">S.NO.</th>
+                          <th className="px-4 py-3 text-left text-xs font-bold">THANA NAME</th>
+                          <th className="px-4 py-3 text-left text-xs font-bold">DISTRICT</th>
+                          <th className="px-4 py-3 text-right text-xs font-bold">FIR COUNT</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y">
+                        {modalData.map((item: any, idx) => (
+                          <tr key={idx} className="hover:bg-muted/30">
+                            <td className="px-4 py-3 text-sm">{idx + 1}</td>
+                            <td className="px-4 py-3 font-medium">{item.name}</td>
+                            <td className="px-4 py-3 text-sm text-muted-foreground">{item.district}</td>
+                            <td className="px-4 py-3 text-right">
+                              <Badge>{item.fir_count}</Badge>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </>
+              )}
+              
+              {/* FIRs Table */}
+              {modalType === 'firs' && (
+                <>
+                  {modalData.length === 0 ? (
+                    <div className="py-8 text-center text-muted-foreground">
+                      <FileText className="h-12 w-12 mx-auto mb-3 opacity-50" />
+                      <p>No FIRs found</p>
+                    </div>
+                  ) : (
+                    <table className="w-full">
+                      <thead className="bg-muted/50 border-b-2">
+                        <tr>
+                          <th className="px-4 py-3 text-left text-xs font-bold">S.NO.</th>
+                          <th className="px-4 py-3 text-left text-xs font-bold">FIR NUMBER</th>
+                          <th className="px-4 py-3 text-left text-xs font-bold">DISTRICT</th>
+                          <th className="px-4 py-3 text-left text-xs font-bold">THANA</th>
+                          <th className="px-4 py-3 text-left text-xs font-bold">DATE</th>
+                          <th className="px-4 py-3 text-left text-xs font-bold">STATUS</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y">
+                        {modalData.map((item: any, idx) => (
+                          <tr key={idx} className="hover:bg-muted/30">
+                            <td className="px-4 py-3 text-sm">{idx + 1}</td>
+                            <td className="px-4 py-3 font-mono text-sm font-medium">{item.fir_number}</td>
+                            <td className="px-4 py-3 text-sm">{item.district_name}</td>
+                            <td className="px-4 py-3 text-sm">{item.thana_name}</td>
+                            <td className="px-4 py-3 text-sm">{formatDate(item.incident_date)}</td>
+                            <td className="px-4 py-3">
+                              <Badge>{item.case_status || 'Open'}</Badge>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </>
+              )}
+              
+              {/* Accused Table */}
+              {modalType === 'accused' && (
+                <>
+                  {modalData.length === 0 ? (
+                    <div className="py-8 text-center text-muted-foreground">
+                      <Users className="h-12 w-12 mx-auto mb-3 opacity-50" />
+                      <p>No accused found</p>
+                    </div>
+                  ) : (
+                    <table className="w-full">
+                      <thead className="bg-muted/50 border-b-2">
+                        <tr>
+                          <th className="px-4 py-3 text-left text-xs font-bold">S.NO.</th>
+                          <th className="px-4 py-3 text-left text-xs font-bold">NAME</th>
+                          <th className="px-4 py-3 text-left text-xs font-bold">FIR NUMBER</th>
+                          <th className="px-4 py-3 text-left text-xs font-bold">TYPE</th>
+                          <th className="px-4 py-3 text-left text-xs font-bold">LOCATION</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y">
+                        {modalData.map((item: any, idx) => (
+                          <tr key={idx} className="hover:bg-muted/30">
+                            <td className="px-4 py-3 text-sm">{idx + 1}</td>
+                            <td className="px-4 py-3 font-medium">{item.name}</td>
+                            <td className="px-4 py-3">
+                              <span className="font-mono text-sm">{item.fir_records?.fir_number}</span>
+                            </td>
+                            <td className="px-4 py-3">
+                              <Badge>{item.accused_type || 'Unknown'}</Badge>
+                            </td>
+                            <td className="px-4 py-3 text-sm">
+                              <div>{item.fir_records?.district_name}</div>
+                              <div className="text-xs text-muted-foreground">{item.fir_records?.thana_name}</div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </>
+              )}
+
+              {/* Bailers Table */}
+              {modalType === 'bailers' && (
+                <>
+                  {modalData.length === 0 ? (
+                    <div className="py-8 text-center text-muted-foreground">
+                      <User className="h-12 w-12 mx-auto mb-3 opacity-50" />
+                      <p>No bailers found</p>
+                    </div>
+                  ) : (
+                    <table className="w-full">
+                      <thead className="bg-muted/50 border-b-2">
+                        <tr>
+                          <th className="px-4 py-3 text-left text-xs font-bold">S.NO.</th>
+                          <th className="px-4 py-3 text-left text-xs font-bold">BAILER NAME</th>
+                          <th className="px-4 py-3 text-left text-xs font-bold">FATHER NAME</th>
+                          <th className="px-4 py-3 text-left text-xs font-bold">MOBILE</th>
+                          <th className="px-4 py-3 text-left text-xs font-bold">ADDRESS</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y">
+                        {modalData.map((item: any, idx) => (
+                          <tr key={item.id || idx} className="hover:bg-muted/30">
+                            <td className="px-4 py-3 text-sm">{idx + 1}</td>
+                            <td className="px-4 py-3 font-medium">
+                              {item.name || item.bailer_name || '-'}
+                            </td>
+                            <td className="px-4 py-3 text-sm">
+                              {item.father_name || item.father || '-'}
+                            </td>
+                            <td className="px-4 py-3 text-sm">
+                              {item.mobile || item.phone || item.contact || '-'}
+                            </td>
+                            <td className="px-4 py-3 text-sm max-w-[200px] truncate">
+                              {item.address || item.permanent_address || '-'}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </>
+              )}
+
+              {/* Bailed Table */}
+              {modalType === 'bailed' && (
+                <>
+                  {modalData.length === 0 ? (
+                    <div className="py-8 text-center text-muted-foreground">
+                      <Scale className="h-12 w-12 mx-auto mb-3 opacity-50" />
+                      <p>No bailed accused found</p>
+                    </div>
+                  ) : (
+                    <table className="w-full">
+                      <thead className="bg-muted/50 border-b-2">
+                        <tr>
+                          <th className="px-4 py-3 text-left text-xs font-bold">S.NO.</th>
+                          <th className="px-4 py-3 text-left text-xs font-bold">ACCUSED NAME</th>
+                          <th className="px-4 py-3 text-left text-xs font-bold">FIR NUMBER</th>
+                          <th className="px-4 py-3 text-left text-xs font-bold">BAIL DATE</th>
+                          <th className="px-4 py-3 text-left text-xs font-bold">LOCATION</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y">
+                        {modalData.map((item: any, idx) => (
+                          <tr key={idx} className="hover:bg-muted/30">
+                            <td className="px-4 py-3 text-sm">{idx + 1}</td>
+                            <td className="px-4 py-3 font-medium">{item.name}</td>
+                            <td className="px-4 py-3">
+                              <span className="font-mono text-sm">{item.fir_records?.fir_number}</span>
+                            </td>
+                            <td className="px-4 py-3 text-sm">{formatDate(item.created_at)}</td>
+                            <td className="px-4 py-3 text-sm">
+                              <div>{item.fir_records?.district_name}</div>
+                              <div className="text-xs text-muted-foreground">{item.fir_records?.thana_name}</div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </>
+              )}
+
+              {/* Custody Table */}
+              {modalType === 'custody' && (
+                <>
+                  {modalData.length === 0 ? (
+                    <div className="py-8 text-center text-muted-foreground">
+                      <Lock className="h-12 w-12 mx-auto mb-3 opacity-50" />
+                      <p>No accused in custody found</p>
+                    </div>
+                  ) : (
+                    <table className="w-full">
+                      <thead className="bg-muted/50 border-b-2">
+                        <tr>
+                          <th className="px-4 py-3 text-left text-xs font-bold">S.NO.</th>
+                          <th className="px-4 py-3 text-left text-xs font-bold">ACCUSED NAME</th>
+                          <th className="px-4 py-3 text-left text-xs font-bold">FIR NUMBER</th>
+                          <th className="px-4 py-3 text-left text-xs font-bold">ARREST DATE</th>
+                          <th className="px-4 py-3 text-left text-xs font-bold">LOCATION</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y">
+                        {modalData.map((item: any, idx) => (
+                          <tr key={idx} className="hover:bg-muted/30">
+                            <td className="px-4 py-3 text-sm">{idx + 1}</td>
+                            <td className="px-4 py-3 font-medium">{item.name}</td>
+                            <td className="px-4 py-3">
+                              <span className="font-mono text-sm">{item.fir_records?.fir_number}</span>
+                            </td>
+                            <td className="px-4 py-3 text-sm">{formatDate(item.created_at)}</td>
+                            <td className="px-4 py-3 text-sm">
+                              <div>{item.fir_records?.district_name}</div>
+                              <div className="text-xs text-muted-foreground">{item.fir_records?.thana_name}</div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </>
+              )}
+
+              {/* Summary at bottom */}
+              <div className="mt-4 p-4 bg-muted/30 rounded-lg">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-semibold">Total Records:</span>
+                  <Badge variant="secondary" className="text-lg">{modalData.length}</Badge>
+                </div>
+              </div>
+            </div>
+          )}
+        </DataModal>
 
         {/* Top Districts & Thanas */}
         <div className="grid lg:grid-cols-2 gap-6 mb-6">
-          {/* Top Districts */}
-          <Card className="border-2">
-            <CardHeader className="bg-muted/30 border-b pb-4">
-              <CardTitle className="text-lg flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Building className="h-5 w-5 text-primary" />
-                  <span>Top Districts by Accused</span>
-                </div>
-                <Badge variant="secondary">Top 10</Badge>
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Building className="h-5 w-5" />
+                Top Districts by Accused Count
               </CardTitle>
             </CardHeader>
-            <CardContent className="p-0">
-              {loading ? (
-                <div className="py-12 text-center">
-                  <RefreshCw className="h-8 w-8 animate-spin mx-auto text-primary mb-3" />
-                  <p className="text-muted-foreground">Loading...</p>
-                </div>
-              ) : topDistricts.length === 0 ? (
-                <div className="py-12 text-center">
-                  <Building className="h-12 w-12 mx-auto text-muted-foreground mb-3 opacity-50" />
-                  <p className="text-muted-foreground">No data available</p>
-                </div>
+            <CardContent>
+              {topDistricts.length === 0 ? (
+                <p className="text-center text-muted-foreground py-4">No data available</p>
               ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full">
-                    <thead className="bg-muted/50 border-b-2">
-                      <tr>
-                        <th className="px-4 py-3 text-left text-xs font-bold">RANK</th>
-                        <th className="px-4 py-3 text-left text-xs font-bold">DISTRICT NAME</th>
-                        <th className="px-4 py-3 text-right text-xs font-bold">ACCUSED COUNT</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y">
-                      {topDistricts.map((item, idx) => (
-                        <tr key={item.name} className="hover:bg-muted/30 transition-colors">
-                          <td className="px-4 py-3">
-                            <Badge 
-                              variant={idx === 0 ? "default" : idx < 3 ? "secondary" : "outline"}
-                              className="font-bold"
-                            >
-                              #{idx + 1}
-                            </Badge>
-                          </td>
-                          <td className="px-4 py-3 font-medium">{item.name}</td>
-                          <td className="px-4 py-3 text-right">
-                            <Badge className="bg-blue-100 text-blue-700 border-blue-300">
-                              {item.count}
-                            </Badge>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                <div className="space-y-3">
+                  {topDistricts.map((district, idx) => (
+                    <div key={idx} className="flex items-center justify-between p-2 rounded hover:bg-muted/50">
+                      <span className="font-medium">{district.name}</span>
+                      <Badge variant="secondary">{district.count}</Badge>
+                    </div>
+                  ))}
                 </div>
               )}
             </CardContent>
           </Card>
 
-          {/* Top Thanas */}
-          <Card className="border-2">
-            <CardHeader className="bg-muted/30 border-b pb-4">
-              <CardTitle className="text-lg flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <MapPin className="h-5 w-5 text-primary" />
-                  <span>Top Thanas by Accused</span>
-                </div>
-                <Badge variant="secondary">Top 10</Badge>
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <MapPin className="h-5 w-5" />
+                Top Thanas by Accused Count
               </CardTitle>
             </CardHeader>
-            <CardContent className="p-0">
-              {loading ? (
-                <div className="py-12 text-center">
-                  <RefreshCw className="h-8 w-8 animate-spin mx-auto text-primary mb-3" />
-                  <p className="text-muted-foreground">Loading...</p>
-                </div>
-              ) : topThanas.length === 0 ? (
-                <div className="py-12 text-center">
-                  <MapPin className="h-12 w-12 mx-auto text-muted-foreground mb-3 opacity-50" />
-                  <p className="text-muted-foreground">No data available</p>
-                </div>
+            <CardContent>
+              {topThanas.length === 0 ? (
+                <p className="text-center text-muted-foreground py-4">No data available</p>
               ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full">
-                    <thead className="bg-muted/50 border-b-2">
-                      <tr>
-                        <th className="px-4 py-3 text-left text-xs font-bold">RANK</th>
-                        <th className="px-4 py-3 text-left text-xs font-bold">THANA NAME</th>
-                        <th className="px-4 py-3 text-right text-xs font-bold">ACCUSED COUNT</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y">
-                      {topThanas.map((item, idx) => (
-                        <tr key={item.name} className="hover:bg-muted/30 transition-colors">
-                          <td className="px-4 py-3">
-                            <Badge 
-                              variant={idx === 0 ? "default" : idx < 3 ? "secondary" : "outline"}
-                              className="font-bold"
-                            >
-                              #{idx + 1}
-                            </Badge>
-                          </td>
-                          <td className="px-4 py-3 font-medium">{item.name}</td>
-                          <td className="px-4 py-3 text-right">
-                            <Badge className="bg-purple-100 text-purple-700 border-purple-300">
-                              {item.count}
-                            </Badge>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                <div className="space-y-3">
+                  {topThanas.map((thana, idx) => (
+                    <div key={idx} className="flex items-center justify-between p-2 rounded hover:bg-muted/50">
+                      <span className="font-medium">{thana.name}</span>
+                      <Badge variant="secondary">{thana.count}</Badge>
+                    </div>
+                  ))}
                 </div>
               )}
             </CardContent>
@@ -521,128 +950,64 @@ export default function DashboardPage() {
 
         {/* Recent FIRs & Case Status */}
         <div className="grid lg:grid-cols-3 gap-6">
-          {/* Recent FIRs */}
-          <div className="lg:col-span-2">
-            <Card className="border-2">
-              <CardHeader className="bg-muted/30 border-b pb-4">
-                <CardTitle className="text-lg flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <FileText className="h-5 w-5 text-primary" />
-                    <span>Recent FIR Registrations</span>
-                  </div>
-                  <Badge variant="secondary">Last 10</Badge>
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="p-0">
-                {loading ? (
-                  <div className="py-12 text-center">
-                    <RefreshCw className="h-8 w-8 animate-spin mx-auto text-primary mb-3" />
-                    <p className="text-muted-foreground">Loading...</p>
-                  </div>
-                ) : recentFirs.length === 0 ? (
-                  <div className="py-12 text-center">
-                    <FileText className="h-12 w-12 mx-auto text-muted-foreground mb-3 opacity-50" />
-                    <p className="text-muted-foreground">No FIRs found</p>
-                  </div>
-                ) : (
-                  <div className="overflow-x-auto">
-                    <table className="w-full">
-                      <thead className="bg-muted/50 border-b-2">
-                        <tr>
-                          <th className="px-4 py-3 text-left text-xs font-bold">S.NO.</th>
-                          <th className="px-4 py-3 text-left text-xs font-bold">FIR NUMBER</th>
-                          <th className="px-4 py-3 text-left text-xs font-bold">DATE</th>
-                          <th className="px-4 py-3 text-left text-xs font-bold">LOCATION</th>
-                          <th className="px-4 py-3 text-center text-xs font-bold">STATUS</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y">
-                        {recentFirs.map((fir, idx) => {
-                          const statusConfig = getStatusConfig(fir.case_status);
-                          return (
-                            <tr key={fir.id} className="hover:bg-muted/30 transition-colors">
-                              <td className="px-4 py-3 text-sm">{idx + 1}</td>
-                              <td className="px-4 py-3">
-                                <span className="font-mono font-bold text-primary">
-                                  {fir.fir_number}
-                                </span>
-                              </td>
-                              <td className="px-4 py-3 text-sm">
-                                {formatDate(fir.incident_date)}
-                              </td>
-                              <td className="px-4 py-3">
-                                <div className="space-y-1">
-                                  <div className="text-sm">{fir.district_name || '-'}</div>
-                                  <div className="text-xs text-muted-foreground">
-                                    {fir.thana_name || '-'}
-                                  </div>
-                                </div>
-                              </td>
-                              <td className="px-4 py-3 text-center">
-                                <Badge 
-                                  className={`${statusConfig.bg} ${statusConfig.text} ${statusConfig.border} border`}
-                                >
-                                  {statusConfig.label}
-                                </Badge>
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          </div>
-
-          {/* Case Status Summary */}
-          <Card className="border-2">
-            <CardHeader className="bg-muted/30 border-b pb-4">
-              <CardTitle className="text-lg flex items-center gap-2">
-                <Gavel className="h-5 w-5 text-primary" />
-                <span>Case Status</span>
+          <Card className="lg:col-span-2">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <FileText className="h-5 w-5" />
+                Recent FIRs
               </CardTitle>
             </CardHeader>
-            <CardContent className="pt-6">
-              {loading ? (
-                <div className="py-8 text-center">
-                  <RefreshCw className="h-8 w-8 animate-spin mx-auto text-primary mb-3" />
-                  <p className="text-muted-foreground">Loading...</p>
-                </div>
-              ) : caseStatusData.length === 0 ? (
-                <div className="py-8 text-center">
-                  <Gavel className="h-12 w-12 mx-auto text-muted-foreground mb-3 opacity-50" />
-                  <p className="text-muted-foreground">No data available</p>
-                </div>
+            <CardContent>
+              {recentFirs.length === 0 ? (
+                <p className="text-center text-muted-foreground py-4">No recent FIRs</p>
               ) : (
-                <div className="space-y-4">
-                  {caseStatusData.map((item) => {
-                    const config = getStatusConfig(item.status);
-                    const percentage = stats.totalFirs > 0 
-                      ? Math.round((item.count / stats.totalFirs) * 100)
-                      : 0;
+                <div className="space-y-3">
+                  {recentFirs.map((fir) => {
+                    const statusConfig = getStatusConfig(fir.case_status);
                     return (
-                      <div key={item.status} className="space-y-2">
-                        <div className="flex items-center justify-between">
-                          <Badge 
-                            className={`${config.bg} ${config.text} ${config.border} border`}
-                          >
-                            {config.label}
-                          </Badge>
-                          <span className="text-lg font-bold">{item.count}</span>
-                        </div>
-                        <div className="relative">
-                          <div className="w-full bg-muted rounded-full h-2 overflow-hidden">
-                            <div 
-                              className="h-full bg-primary transition-all duration-500"
-                              style={{ width: `${percentage}%` }}
-                            />
+                      <div key={fir.id} className="p-3 border rounded-lg hover:bg-muted/30">
+                        <div className="flex items-start justify-between">
+                          <div className="space-y-1">
+                            <p className="font-mono font-semibold">{fir.fir_number}</p>
+                            <p className="text-sm text-muted-foreground">
+                              {fir.district_name} - {fir.thana_name}
+                            </p>
+                            <p className="text-xs text-muted-foreground">
+                              {formatDate(fir.incident_date)}
+                            </p>
                           </div>
-                          <span className="absolute right-0 -top-5 text-xs text-muted-foreground">
-                            {percentage}%
-                          </span>
+                          <Badge className={`${statusConfig.bg} ${statusConfig.text} ${statusConfig.border}`}>
+                            {statusConfig.label}
+                          </Badge>
                         </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Gavel className="h-5 w-5" />
+                Case Status Distribution
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              {caseStatusData.length === 0 ? (
+                <p className="text-center text-muted-foreground py-4">No data available</p>
+              ) : (
+                <div className="space-y-3">
+                  {caseStatusData.map((item, idx) => {
+                    const statusConfig = getStatusConfig(item.status);
+                    return (
+                      <div key={idx} className="flex items-center justify-between p-2 rounded hover:bg-muted/50">
+                        <Badge className={`${statusConfig.bg} ${statusConfig.text} ${statusConfig.border}`}>
+                          {statusConfig.label}
+                        </Badge>
+                        <span className="font-bold">{item.count}</span>
                       </div>
                     );
                   })}

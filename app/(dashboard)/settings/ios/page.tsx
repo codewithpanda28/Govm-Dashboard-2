@@ -14,12 +14,38 @@ import {
 } from "lucide-react"
 import { toast } from "sonner"
 
-// 🔥 FIXED: Made railway_district_id optional since we don't use it
-interface Thana {
+interface State {
   id: number
   name: string
   code: string
-  railway_district_id?: number | null  // ← Made optional
+}
+
+interface Zone {
+  id: number
+  zone_name: string
+  zone_code: string
+  state_id: number
+  is_active: boolean
+}
+
+interface District {
+  id: number
+  name: string
+  code?: string
+  state_id?: number
+  zone_id?: number
+}
+
+interface Thana {
+  id: number
+  name: string
+  thana_name?: string
+  code?: string
+  thana_id?: string
+  district_id?: number
+  railway_district_id?: number
+  state_id?: number
+  zone_id?: number
 }
 
 interface IO {
@@ -50,7 +76,13 @@ const DESIGNATIONS = [
 export default function ManageIOsPage() {
   const supabase = createClient()
   const [ios, setIOs] = useState<IO[]>([])
+  const [states, setStates] = useState<State[]>([])
+  const [zones, setZones] = useState<Zone[]>([])
+  const [districts, setDistricts] = useState<District[]>([])
   const [thanas, setThanas] = useState<Thana[]>([])
+  const [filteredZones, setFilteredZones] = useState<Zone[]>([])
+  const [filteredDistricts, setFilteredDistricts] = useState<District[]>([])
+  const [filteredThanas, setFilteredThanas] = useState<Thana[]>([])
   const [loading, setLoading] = useState(true)
   const [searchQuery, setSearchQuery] = useState("")
   const [selectedThana, setSelectedThana] = useState<string>("all")
@@ -59,6 +91,9 @@ export default function ManageIOsPage() {
   const [editingId, setEditingId] = useState<number | null>(null)
   
   const [formData, setFormData] = useState({
+    state_id: "",
+    zone_id: "",
+    district_id: "",
     thana_id: "",
     name: "",
     designation: "",
@@ -68,29 +103,102 @@ export default function ManageIOsPage() {
   })
 
   useEffect(() => {
+    loadStates()
+    loadZones()
+    loadDistricts()
     loadThanas()
     loadIOs()
   }, [])
+
+  // Filter zones when state changes
+  useEffect(() => {
+    if (formData.state_id) {
+      const filtered = zones.filter(z => z.state_id === parseInt(formData.state_id) && z.is_active)
+      setFilteredZones(filtered)
+    } else {
+      setFilteredZones([])
+    }
+  }, [formData.state_id, zones])
+
+  // Filter districts when state/zone changes
+  useEffect(() => {
+    let filtered = districts
+
+    if (formData.state_id) {
+      filtered = filtered.filter(d => d.state_id === parseInt(formData.state_id))
+    }
+
+    if (formData.zone_id) {
+      filtered = filtered.filter(d => d.zone_id === parseInt(formData.zone_id))
+    }
+
+    setFilteredDistricts(filtered)
+  }, [formData.state_id, formData.zone_id, districts])
+
+  // Filter thanas when district changes
+  useEffect(() => {
+    if (formData.district_id) {
+      const filtered = thanas.filter(t => {
+        const thanaDistrictId = t.district_id || t.railway_district_id
+        return thanaDistrictId === parseInt(formData.district_id)
+      })
+      setFilteredThanas(filtered)
+    } else {
+      setFilteredThanas([])
+    }
+  }, [formData.district_id, thanas])
+
+  const loadStates = async () => {
+    try {
+      const { data, error } = await supabase
+        .from("states")
+        .select("id, name, code")
+        .eq("is_active", true)
+        .order("name", { ascending: true })
+      if (error) throw error
+      setStates(data || [])
+    } catch (err: any) {
+      console.error("Error loading states:", err)
+    }
+  }
+
+  const loadZones = async () => {
+    try {
+      const { data, error } = await supabase
+        .from("zones")
+        .select("id, zone_name, zone_code, state_id, is_active")
+        .eq("is_active", true)
+        .order("zone_name", { ascending: true })
+      if (error) throw error
+      setZones(data || [])
+    } catch (err: any) {
+      console.error("Error loading zones:", err)
+    }
+  }
+
+  const loadDistricts = async () => {
+    try {
+      const { data, error } = await supabase
+        .from("districts")
+        .select("*")
+        .order("name", { ascending: true })
+      if (error) throw error
+      setDistricts(data || [])
+    } catch (err: any) {
+      console.error("Error loading districts:", err)
+    }
+  }
 
   const loadThanas = async () => {
     try {
       const { data, error } = await supabase
         .from("thanas")
-        .select("id, name, code")
+        .select("*")
         .eq("is_active", true)
         .order("name", { ascending: true })
 
       if (error) throw error
-      
-      // 🔥 FIXED: Type assertion to match Thana interface
-      const formattedThanas: Thana[] = (data || []).map(item => ({
-        id: item.id,
-        name: item.name,
-        code: item.code,
-        railway_district_id: null  // Optional field
-      }))
-      
-      setThanas(formattedThanas)
+      setThanas(data || [])
     } catch (err: any) {
       console.error("Error loading thanas:", err)
       toast.error("Failed to load thanas")
@@ -102,18 +210,18 @@ export default function ManageIOsPage() {
     try {
       const { data, error } = await supabase
         .from("investigating_officers")
-        .select(`
-          *,
-          thana:thanas (
-            id,
-            name,
-            code
-          )
-        `)
+        .select("*")
         .order("name", { ascending: true })
 
       if (error) throw error
-      setIOs(data || [])
+
+      // Fetch thana details for each IO
+      const iosWithThanas = await Promise.all((data || []).map(async (io) => {
+        const thana = thanas.find(t => t.id === io.thana_id)
+        return { ...io, thana }
+      }))
+
+      setIOs(iosWithThanas)
     } catch (err: any) {
       console.error("Error loading IOs:", err)
       toast.error("Failed to load investigating officers")
@@ -122,11 +230,21 @@ export default function ManageIOsPage() {
     }
   }
 
+  const getThanaName = (thana: Thana | undefined): string => {
+    if (!thana) return "-"
+    return thana.thana_name || thana.name || "-"
+  }
+
+  const getThanaCode = (thana: Thana | undefined): string => {
+    if (!thana) return ""
+    return thana.thana_id || thana.code || ""
+  }
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     
     if (!formData.thana_id || !formData.name.trim() || !formData.designation || !formData.mobile.trim()) {
-      toast.error("Thana, Name, Designation and Mobile are required")
+      toast.error("State, District, Thana, Name, Designation and Mobile are required")
       return
     }
 
@@ -148,7 +266,6 @@ export default function ManageIOsPage() {
 
     try {
       if (editingId) {
-        // Update
         const { error } = await supabase
           .from("investigating_officers")
           .update({
@@ -164,7 +281,6 @@ export default function ManageIOsPage() {
         if (error) throw error
         toast.success("IO updated successfully!")
       } else {
-        // Insert
         const { error } = await supabase
           .from("investigating_officers")
           .insert({
@@ -189,7 +305,16 @@ export default function ManageIOsPage() {
   }
 
   const handleEdit = (io: IO) => {
+    const thana = thanas.find(t => t.id === io.thana_id)
+    const districtId = thana?.district_id || thana?.railway_district_id
+    const district = districts.find(d => d.id === districtId)
+    const stateId = district?.state_id || thana?.state_id
+    const zoneId = district?.zone_id || thana?.zone_id
+
     setFormData({
+      state_id: stateId?.toString() || "",
+      zone_id: zoneId?.toString() || "",
+      district_id: districtId?.toString() || "",
       thana_id: io.thana_id.toString(),
       name: io.name,
       designation: io.designation,
@@ -237,6 +362,9 @@ export default function ManageIOsPage() {
 
   const resetForm = () => {
     setFormData({ 
+      state_id: "",
+      zone_id: "",
+      district_id: "",
       thana_id: "",
       name: "",
       designation: "",
@@ -250,10 +378,11 @@ export default function ManageIOsPage() {
 
   // Filter IOs
   const filteredIOs = ios.filter(io => {
+    const thanaName = getThanaName(io.thana).toLowerCase()
     const matchesSearch = io.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
                          io.email?.toLowerCase().includes(searchQuery.toLowerCase()) ||
                          io.mobile?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                         io.thana?.name.toLowerCase().includes(searchQuery.toLowerCase())
+                         thanaName.includes(searchQuery.toLowerCase())
     
     const matchesThana = selectedThana === "all" || io.thana_id.toString() === selectedThana
     const matchesDesignation = selectedDesignation === "all" || io.designation === selectedDesignation
@@ -314,7 +443,7 @@ export default function ManageIOsPage() {
             <option value="all">All Thanas</option>
             {thanas.map(thana => (
               <option key={thana.id} value={thana.id.toString()}>
-                {thana.name} ({thana.code})
+                {getThanaName(thana)}
               </option>
             ))}
           </select>
@@ -353,26 +482,85 @@ export default function ManageIOsPage() {
             </CardHeader>
             <CardContent className="pt-6">
               <form onSubmit={handleSubmit} className="space-y-4">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  
+                  {/* State */}
                   <div>
-                    <Label>Thana/Police Station *</Label>
+                    <Label>State *</Label>
                     <select
-                      value={formData.thana_id}
-                      onChange={(e) => setFormData({ ...formData, thana_id: e.target.value })}
-                      className="w-full px-3 py-2 border rounded-lg bg-background text-sm"
+                      value={formData.state_id}
+                      onChange={(e) => setFormData({ ...formData, state_id: e.target.value, zone_id: "", district_id: "", thana_id: "" })}
+                      className="w-full px-3 py-2 border rounded-lg bg-background text-sm mt-1"
                       required
                     >
-                      <option value="">-- Select Thana --</option>
-                      {thanas.map(thana => (
-                        <option key={thana.id} value={thana.id}>
-                          {thana.name} ({thana.code})
+                      <option value="">-- Select State --</option>
+                      {states.map(state => (
+                        <option key={state.id} value={state.id}>{state.name}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Zone (Optional) */}
+                  <div>
+                    <Label>Zone Name (Optional)</Label>
+                    <select
+                      value={formData.zone_id}
+                      onChange={(e) => setFormData({ ...formData, zone_id: e.target.value, district_id: "", thana_id: "" })}
+                      className="w-full px-3 py-2 border rounded-lg bg-background text-sm mt-1"
+                      disabled={!formData.state_id}
+                    >
+                      <option value="">-- Select Zone --</option>
+                      {filteredZones.map(zone => (
+                        <option key={zone.id} value={zone.id}>
+                          {zone.zone_name} ({zone.zone_code})
                         </option>
                       ))}
                     </select>
                   </div>
+
+                  {/* District */}
+                  <div>
+                    <Label>District Name *</Label>
+                    <select
+                      value={formData.district_id}
+                      onChange={(e) => setFormData({ ...formData, district_id: e.target.value, thana_id: "" })}
+                      className="w-full px-3 py-2 border rounded-lg bg-background text-sm mt-1"
+                      required
+                      disabled={!formData.state_id}
+                    >
+                      <option value="">-- Select District --</option>
+                      {(formData.state_id ? filteredDistricts : districts).map(district => (
+                        <option key={district.id} value={district.id}>{district.name}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Thana */}
+                  <div>
+                    <Label>Thana Name *</Label>
+                    <select
+                      value={formData.thana_id}
+                      onChange={(e) => setFormData({ ...formData, thana_id: e.target.value })}
+                      className="w-full px-3 py-2 border rounded-lg bg-background text-sm mt-1"
+                      required
+                      disabled={!formData.district_id}
+                    >
+                      <option value="">-- Select Thana --</option>
+                      {filteredThanas.map(thana => (
+                        <option key={thana.id} value={thana.id}>
+                          {getThanaName(thana)} {getThanaCode(thana) && `(${getThanaCode(thana)})`}
+                        </option>
+                      ))}
+                    </select>
+                    {!formData.district_id && (
+                      <p className="text-xs text-muted-foreground mt-1">Select district first</p>
+                    )}
+                  </div>
+
+                  {/* Name of IO */}
                   <div>
                     <Label>Name of IO *</Label>
-                    <div className="relative">
+                    <div className="relative mt-1">
                       <User className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                       <Input
                         placeholder="e.g., Inspector Ramesh Kumar"
@@ -383,12 +571,14 @@ export default function ManageIOsPage() {
                       />
                     </div>
                   </div>
+
+                  {/* Designation */}
                   <div>
                     <Label>Designation *</Label>
                     <select
                       value={formData.designation}
                       onChange={(e) => setFormData({ ...formData, designation: e.target.value })}
-                      className="w-full px-3 py-2 border rounded-lg bg-background text-sm"
+                      className="w-full px-3 py-2 border rounded-lg bg-background text-sm mt-1"
                       required
                     >
                       <option value="">-- Select Designation --</option>
@@ -397,9 +587,26 @@ export default function ManageIOsPage() {
                       ))}
                     </select>
                   </div>
+
+                  {/* Email ID */}
                   <div>
-                    <Label>Mobile Number *</Label>
-                    <div className="relative">
+                    <Label>Email ID</Label>
+                    <div className="relative mt-1">
+                      <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                      <Input
+                        type="email"
+                        placeholder="e.g., io.name@railwaypolice.gov.in"
+                        value={formData.email}
+                        onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                        className="pl-10"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Mobile No. */}
+                  <div>
+                    <Label>Mobile No. *</Label>
+                    <div className="relative mt-1">
                       <Phone className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                       <Input
                         placeholder="e.g., 9876543210"
@@ -411,19 +618,8 @@ export default function ManageIOsPage() {
                       />
                     </div>
                   </div>
-                  <div>
-                    <Label>Email ID</Label>
-                    <div className="relative">
-                      <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                      <Input
-                        type="email"
-                        placeholder="e.g., io.name@railwaypolice.gov.in"
-                        value={formData.email}
-                        onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                        className="pl-10"
-                      />
-                    </div>
-                  </div>
+
+                  {/* Active Checkbox */}
                   <div className="flex items-center gap-2 pt-6">
                     <input
                       type="checkbox"
@@ -437,6 +633,7 @@ export default function ManageIOsPage() {
                     </Label>
                   </div>
                 </div>
+
                 <div className="flex justify-end gap-2 pt-2">
                   <Button type="button" variant="outline" onClick={resetForm}>
                     Cancel
@@ -455,7 +652,7 @@ export default function ManageIOsPage() {
         <Card className="border-2">
           <CardHeader className="bg-muted/30 border-b pb-4">
             <CardTitle className="text-lg flex items-center justify-between">
-              <span>Investigating Officers List ({filteredIOs.length})</span>
+              <span>IO List ({filteredIOs.length})</span>
               <Badge variant="secondary">{ios.length} Total Officers</Badge>
             </CardTitle>
           </CardHeader>
@@ -512,10 +709,10 @@ export default function ManageIOsPage() {
                         <td className="px-4 py-3">
                           <div className="flex items-center gap-2">
                             <Home className="h-3 w-3 text-muted-foreground" />
-                            <span className="text-sm">{io.thana?.name}</span>
-                            {io.thana?.code && (
+                            <span className="text-sm">{getThanaName(io.thana)}</span>
+                            {getThanaCode(io.thana) && (
                               <Badge variant="outline" className="text-xs">
-                                {io.thana.code}
+                                {getThanaCode(io.thana)}
                               </Badge>
                             )}
                           </div>
@@ -625,5 +822,3 @@ export default function ManageIOsPage() {
     </div>
   )
 }
-
-

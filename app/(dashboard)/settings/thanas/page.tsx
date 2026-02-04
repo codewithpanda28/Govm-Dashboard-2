@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import { createClient } from "@/lib/supabase/client"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -11,98 +11,148 @@ import { Textarea } from "@/components/ui/textarea"
 import {
   Home, Plus, Edit, Trash2, RefreshCw, Search,
   CheckCircle, XCircle, Save, X, Building,
-  Phone, Train
+  Train, Upload, FileSpreadsheet
 } from "lucide-react"
 import { toast } from "sonner"
+
+interface State {
+  id: number
+  name: string
+  code: string
+}
+
+interface Zone {
+  id: number
+  zone_name: string
+  zone_code: string
+  state_id: number
+  is_active: boolean
+}
 
 interface District {
   id: number
   name: string
-  code: string
+  code?: string
   state_id?: number
+  zone_id?: number
 }
 
 interface Thana {
   id: number
-  district_id: number
-  thana_name: string
-  thana_code: string
-  address: string | null
-  phone: string | null
-  is_active: boolean
-  created_at: string
+  [key: string]: any
 }
+
+const THANA_TYPES = [
+  { value: "state_govt", label: "State Govt." },
+  { value: "railway_govt", label: "Railway Govt." }
+]
 
 export default function ManageThanasPage() {
   const supabase = createClient()
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  
   const [thanas, setThanas] = useState<Thana[]>([])
+  const [states, setStates] = useState<State[]>([])
+  const [zones, setZones] = useState<Zone[]>([])
   const [districts, setDistricts] = useState<District[]>([])
+  const [filteredZones, setFilteredZones] = useState<Zone[]>([])
+  const [filteredDistricts, setFilteredDistricts] = useState<District[]>([])
   const [loading, setLoading] = useState(true)
+  const [uploading, setUploading] = useState(false)
   const [searchQuery, setSearchQuery] = useState("")
-  const [selectedDistrict, setSelectedDistrict] = useState<string>("all")
+  const [selectedStateFilter, setSelectedStateFilter] = useState<string>("all")
+  const [selectedDistrictFilter, setSelectedDistrictFilter] = useState<string>("all")
+  const [selectedTypeFilter, setSelectedTypeFilter] = useState<string>("all")
   const [showForm, setShowForm] = useState(false)
   const [editingId, setEditingId] = useState<number | null>(null)
   
   const [formData, setFormData] = useState({
+    state_id: "",
+    zone_id: "",
     district_id: "",
+    thana_type: "",
     thana_name: "",
-    thana_code: "",
+    thana_id: "",
     address: "",
-    phone: "",
     is_active: true
   })
 
   useEffect(() => {
+    loadStates()
+    loadZones()
     loadDistricts()
     loadThanas()
   }, [])
 
-  // ✅ Load Districts from actual 'districts' table
+  useEffect(() => {
+    if (formData.state_id) {
+      const filtered = zones.filter(z => z.state_id === parseInt(formData.state_id) && z.is_active)
+      setFilteredZones(filtered)
+    } else {
+      setFilteredZones([])
+    }
+  }, [formData.state_id, zones])
+
+  useEffect(() => {
+    let filtered = districts
+    if (formData.state_id) {
+      filtered = filtered.filter(d => d.state_id === parseInt(formData.state_id))
+    }
+    if (formData.zone_id) {
+      filtered = filtered.filter(d => d.zone_id === parseInt(formData.zone_id))
+    }
+    setFilteredDistricts(filtered)
+  }, [formData.state_id, formData.zone_id, districts])
+
+  const loadStates = async () => {
+    try {
+      const { data, error } = await supabase
+        .from("states")
+        .select("id, name, code")
+        .eq("is_active", true)
+        .order("name", { ascending: true })
+      if (error) throw error
+      setStates(data || [])
+    } catch (err: any) {
+      console.error("Error loading states:", err)
+    }
+  }
+
+  const loadZones = async () => {
+    try {
+      const { data, error } = await supabase
+        .from("zones")
+        .select("id, zone_name, zone_code, state_id, is_active")
+        .eq("is_active", true)
+        .order("zone_name", { ascending: true })
+      if (error) throw error
+      setZones(data || [])
+    } catch (err: any) {
+      console.error("Error loading zones:", err)
+    }
+  }
+
   const loadDistricts = async () => {
     try {
-      console.log("Loading districts...")
-      
       const { data, error } = await supabase
         .from("districts")
         .select("*")
         .order("name", { ascending: true })
-
-      if (error) {
-        console.error("Districts error:", error)
-        throw error
-      }
-
-      console.log("Districts loaded:", data?.length, data)
+      if (error) throw error
       setDistricts(data || [])
     } catch (err: any) {
       console.error("Error loading districts:", err)
-      toast.error("Failed to load districts")
     }
   }
 
-  // ✅ Load Thanas - Check actual column names
   const loadThanas = async () => {
     setLoading(true)
     try {
-      console.log("Loading thanas...")
-
       const { data, error } = await supabase
         .from("thanas")
         .select("*")
         .order("id", { ascending: true })
-
-      if (error) {
-        console.error("Thanas error:", error)
-        throw error
-      }
-
-      console.log("Thanas loaded:", data?.length, data)
-      
-      // Check first record to see actual column names
-      if (data && data.length > 0) {
-        console.log("Thana columns:", Object.keys(data[0]))
-      }
-
+      if (error) throw error
       setThanas(data || [])
     } catch (err: any) {
       console.error("Error loading thanas:", err)
@@ -112,93 +162,105 @@ export default function ManageThanasPage() {
     }
   }
 
-  // ✅ Get thana name (handles both 'name' and 'thana_name')
-  const getThanaName = (thana: any): string => {
-    return thana.thana_name || thana.name || ""
-  }
-
-  // ✅ Get thana code (handles both 'code' and 'thana_code')
-  const getThanaCode = (thana: any): string => {
-    return thana.thana_code || thana.code || ""
-  }
-
-  // ✅ Get district_id (handles both 'district_id' and 'railway_district_id')
-  const getDistrictId = (thana: any): number => {
+  const getThanaDistrictId = (thana: Thana): number => {
     return thana.district_id || thana.railway_district_id || 0
   }
 
-  // ✅ Get district name for display
-  const getDistrictName = (thana: any): string => {
-    const districtId = getDistrictId(thana)
-    const district = districts.find(d => d.id === districtId)
-    return district?.name || "Unknown"
+  const getThanaName = (thana: Thana): string => {
+    return thana.thana_name || thana.name || ""
   }
 
-  // ✅ Get district code for display
-  const getDistrictCode = (thana: any): string => {
-    const districtId = getDistrictId(thana)
+  const getThanaCode = (thana: Thana): string => {
+    return thana.thana_id || thana.code || ""
+  }
+
+  const getDistrictName = (districtId: number): string => {
     const district = districts.find(d => d.id === districtId)
-    return district?.code || ""
+    return district?.name || "-"
+  }
+
+  const getStateName = (stateId: number | null | undefined): string => {
+    if (!stateId) return "-"
+    const state = states.find(s => s.id === stateId)
+    return state?.name || "-"
+  }
+
+  const getZoneName = (zoneId: number | null | undefined): string => {
+    if (!zoneId) return "-"
+    const zone = zones.find(z => z.id === zoneId)
+    return zone?.zone_name || "-"
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     
-    if (!formData.district_id || !formData.thana_name.trim() || !formData.thana_code.trim()) {
-      toast.error("District, Name and Code are required")
+    if (!formData.district_id || !formData.thana_name.trim()) {
+      toast.error("District and Thana Name are required")
       return
     }
 
     try {
-      // Detect column names from existing data
-      const useNewColumns = thanas.length === 0 || thanas[0].hasOwnProperty('thana_name')
-      
+      // Build minimal insert data - only essential fields
       const insertData: any = {
         is_active: formData.is_active
       }
 
-      // Set district_id column
-      if (thanas.length > 0 && thanas[0].hasOwnProperty('railway_district_id')) {
-        insertData.railway_district_id = parseInt(formData.district_id)
-      } else {
-        insertData.district_id = parseInt(formData.district_id)
-      }
+      // REQUIRED: Add name field (exists in all schemas)
+      insertData.name = formData.thana_name.trim()
 
-      // Set name column
-      if (useNewColumns) {
+      // REQUIRED: Add district_id (try both column names)
+      const districtIdValue = parseInt(formData.district_id)
+      insertData.district_id = districtIdValue
+      insertData.railway_district_id = districtIdValue
+
+      // OPTIONAL: Add other fields only if they have values
+      if (formData.thana_name.trim()) {
         insertData.thana_name = formData.thana_name.trim()
-        insertData.thana_code = formData.thana_code.trim().toUpperCase()
-      } else {
-        insertData.name = formData.thana_name.trim()
-        insertData.code = formData.thana_code.trim().toUpperCase()
       }
 
-      // Optional fields
+      if (formData.thana_id.trim()) {
+        insertData.code = formData.thana_id.trim().toUpperCase()
+        insertData.thana_id = formData.thana_id.trim().toUpperCase()
+      }
+
+      if (formData.state_id) {
+        insertData.state_id = parseInt(formData.state_id)
+      }
+
+      if (formData.zone_id) {
+        insertData.zone_id = parseInt(formData.zone_id)
+      }
+
+      if (formData.thana_type) {
+        insertData.thana_type = formData.thana_type
+      }
+
       if (formData.address.trim()) {
         insertData.address = formData.address.trim()
-      }
-      if (formData.phone.trim()) {
-        insertData.phone = formData.phone.trim()
       }
 
       console.log("Saving thana:", insertData)
 
       if (editingId) {
-        // Update
         const { error } = await supabase
           .from("thanas")
           .update(insertData)
           .eq("id", editingId)
 
-        if (error) throw error
+        if (error) {
+          console.error("Update error details:", error)
+          throw error
+        }
         toast.success("Thana updated successfully!")
       } else {
-        // Insert
         const { error } = await supabase
           .from("thanas")
           .insert(insertData)
 
-        if (error) throw error
+        if (error) {
+          console.error("Insert error details:", error)
+          throw error
+        }
         toast.success("Thana added successfully!")
       }
 
@@ -206,17 +268,24 @@ export default function ManageThanasPage() {
       loadThanas()
     } catch (err: any) {
       console.error("Error saving thana:", err)
-      toast.error(err.message || "Failed to save thana")
+      // Show more specific error message
+      if (err.message?.includes("column")) {
+        toast.error("Database schema error. Please run the SQL migration first.")
+      } else {
+        toast.error(err.message || "Failed to save thana")
+      }
     }
   }
 
-  const handleEdit = (thana: any) => {
+  const handleEdit = (thana: Thana) => {
     setFormData({
-      district_id: getDistrictId(thana).toString(),
+      state_id: thana.state_id?.toString() || "",
+      zone_id: thana.zone_id?.toString() || "",
+      district_id: getThanaDistrictId(thana).toString(),
+      thana_type: thana.thana_type || "",
       thana_name: getThanaName(thana),
-      thana_code: getThanaCode(thana),
+      thana_id: getThanaCode(thana),
       address: thana.address || "",
-      phone: thana.phone || "",
       is_active: thana.is_active !== false
     })
     setEditingId(thana.id)
@@ -224,7 +293,7 @@ export default function ManageThanasPage() {
   }
 
   const handleDelete = async (id: number, name: string) => {
-    if (!confirm(`Are you sure you want to delete "${name}"?\n\nNote: This will affect all associated FIRs and data!`)) return
+    if (!confirm(`Are you sure you want to delete "${name}"?`)) return
 
     try {
       const { error } = await supabase
@@ -259,36 +328,120 @@ export default function ManageThanasPage() {
 
   const resetForm = () => {
     setFormData({ 
+      state_id: "",
+      zone_id: "",
       district_id: "",
+      thana_type: "",
       thana_name: "",
-      thana_code: "",
+      thana_id: "",
       address: "",
-      phone: "",
       is_active: true 
     })
     setEditingId(null)
     setShowForm(false)
   }
 
-  // Filter thanas
+  const handleCSVUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+
+    if (!file.name.endsWith('.csv')) {
+      toast.error("Please upload a CSV file")
+      return
+    }
+
+    setUploading(true)
+    
+    try {
+      const text = await file.text()
+      const lines = text.split('\n').filter(line => line.trim())
+      
+      if (lines.length < 2) {
+        toast.error("CSV file is empty")
+        return
+      }
+
+      const header = lines[0].split(',').map(h => h.trim().toLowerCase())
+      const nameIndex = header.findIndex(h => h.includes('name') && (h.includes('thana') || h.includes('station')))
+      const districtIndex = header.findIndex(h => h.includes('district'))
+
+      if (nameIndex === -1) {
+        toast.error("CSV must have 'Thana Name' column")
+        return
+      }
+
+      const dataRows = lines.slice(1)
+      let successCount = 0
+      let errorCount = 0
+
+      for (const row of dataRows) {
+        const columns = row.split(',').map(c => c.trim())
+        if (!columns[nameIndex]) continue
+
+        const thanaData: any = {
+          name: columns[nameIndex],
+          is_active: true
+        }
+
+        if (districtIndex !== -1 && columns[districtIndex]) {
+          const distId = parseInt(columns[districtIndex])
+          thanaData.district_id = distId
+          thanaData.railway_district_id = distId
+        } else if (districts.length > 0) {
+          thanaData.district_id = districts[0].id
+          thanaData.railway_district_id = districts[0].id
+        }
+
+        // Optional: add thana_name if it exists
+        thanaData.thana_name = columns[nameIndex]
+
+        const { error } = await supabase.from("thanas").insert(thanaData)
+
+        if (error) {
+          console.error("CSV insert error:", error)
+          errorCount++
+        } else {
+          successCount++
+        }
+      }
+
+      toast.success(`Uploaded: ${successCount}. Errors: ${errorCount}`)
+      loadThanas()
+      
+    } catch (err: any) {
+      console.error("CSV upload error:", err)
+      toast.error("Failed to process CSV")
+    } finally {
+      setUploading(false)
+      if (fileInputRef.current) fileInputRef.current.value = ""
+    }
+  }
+
+  const getThanaTypeLabel = (type: string | undefined) => {
+    if (!type) return "-"
+    const found = THANA_TYPES.find(t => t.value === type)
+    return found?.label || type
+  }
+
+  const getThanaTypeBadge = (type: string | undefined) => {
+    if (type === "state_govt") return "bg-purple-100 text-purple-700 border-purple-300"
+    if (type === "railway_govt") return "bg-blue-100 text-blue-700 border-blue-300"
+    return "bg-gray-100 text-gray-700 border-gray-300"
+  }
+
   const filteredThanas = thanas.filter(thana => {
     const name = getThanaName(thana).toLowerCase()
     const code = getThanaCode(thana).toLowerCase()
-    const districtName = getDistrictName(thana).toLowerCase()
-    const address = (thana.address || "").toLowerCase()
-    const phone = (thana.phone || "").toLowerCase()
+    const districtId = getThanaDistrictId(thana)
+    const districtName = getDistrictName(districtId).toLowerCase()
     const search = searchQuery.toLowerCase()
 
-    const matchesSearch = name.includes(search) ||
-                         code.includes(search) ||
-                         districtName.includes(search) ||
-                         address.includes(search) ||
-                         phone.includes(search)
+    const matchesSearch = name.includes(search) || code.includes(search) || districtName.includes(search)
+    const matchesDistrict = selectedDistrictFilter === "all" || districtId.toString() === selectedDistrictFilter
+    const matchesState = selectedStateFilter === "all" || thana.state_id?.toString() === selectedStateFilter
+    const matchesType = selectedTypeFilter === "all" || thana.thana_type === selectedTypeFilter
     
-    const matchesDistrict = selectedDistrict === "all" || 
-                           getDistrictId(thana).toString() === selectedDistrict
-    
-    return matchesSearch && matchesDistrict
+    return matchesSearch && matchesDistrict && matchesState && matchesType
   })
 
   return (
@@ -303,21 +456,15 @@ export default function ManageThanasPage() {
             <div>
               <h1 className="text-2xl font-bold">Manage Thanas (Police Stations)</h1>
               <p className="text-muted-foreground text-sm">
-                Add, edit, and manage railway police station records
+                Add, edit, and manage police station records
               </p>
             </div>
           </div>
-          
-          {/* Debug Info */}
-          <div className="flex gap-2 mt-2 text-xs">
-            <span className="bg-blue-100 text-blue-800 px-2 py-1 rounded">Districts: {districts.length}</span>
-            <span className="bg-green-100 text-green-800 px-2 py-1 rounded">Thanas: {thanas.length}</span>
-          </div>
         </div>
 
-        {/* Filters & Actions */}
-        <div className="flex flex-col sm:flex-row gap-3 mb-6">
-          <div className="flex-1 relative">
+        {/* Filters */}
+        <div className="grid grid-cols-1 md:grid-cols-6 gap-3 mb-6">
+          <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <Input
               placeholder="Search thanas..."
@@ -327,38 +474,78 @@ export default function ManageThanasPage() {
             />
           </div>
           <select
-            value={selectedDistrict}
-            onChange={(e) => setSelectedDistrict(e.target.value)}
+            value={selectedStateFilter}
+            onChange={(e) => setSelectedStateFilter(e.target.value)}
             className="px-4 py-2 border rounded-lg bg-background text-sm"
           >
-            <option value="all">All Districts ({districts.length})</option>
-            {districts.map(district => (
-              <option key={district.id} value={district.id.toString()}>
-                {district.name} {district.code ? `(${district.code})` : ""}
-              </option>
+            <option value="all">All States</option>
+            {states.map(state => (
+              <option key={state.id} value={state.id.toString()}>{state.name}</option>
             ))}
           </select>
-          <div className="flex gap-2">
-            <Button variant="outline" onClick={() => { loadDistricts(); loadThanas(); }} disabled={loading}>
-              <RefreshCw className={`h-4 w-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
-              Refresh
-            </Button>
-            <Button onClick={() => setShowForm(!showForm)}>
-              <Plus className="h-4 w-4 mr-2" />
-              Add Thana
-            </Button>
-          </div>
+          <select
+            value={selectedDistrictFilter}
+            onChange={(e) => setSelectedDistrictFilter(e.target.value)}
+            className="px-4 py-2 border rounded-lg bg-background text-sm"
+          >
+            <option value="all">All Districts</option>
+            {districts.map(district => (
+              <option key={district.id} value={district.id.toString()}>{district.name}</option>
+            ))}
+          </select>
+          <select
+            value={selectedTypeFilter}
+            onChange={(e) => setSelectedTypeFilter(e.target.value)}
+            className="px-4 py-2 border rounded-lg bg-background text-sm"
+          >
+            <option value="all">All Types</option>
+            {THANA_TYPES.map(type => (
+              <option key={type.value} value={type.value}>{type.label}</option>
+            ))}
+          </select>
+          <Button variant="outline" onClick={loadThanas} disabled={loading}>
+            <RefreshCw className={`h-4 w-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
+            Refresh
+          </Button>
+          <Button onClick={() => setShowForm(!showForm)}>
+            <Plus className="h-4 w-4 mr-2" />
+            Add Thana
+          </Button>
         </div>
 
-        {/* Warning if no districts */}
-        {districts.length === 0 && (
-          <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-6">
-            <p className="text-yellow-800 font-medium">⚠️ No Districts Found!</p>
-            <p className="text-sm text-yellow-700 mt-1">
-              Please add districts first in "Manage District" section before adding thanas.
-            </p>
-          </div>
-        )}
+        {/* CSV Upload */}
+        <Card className="mb-6 border-2 border-dashed border-primary/30 bg-primary/5">
+          <CardContent className="py-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <FileSpreadsheet className="h-8 w-8 text-primary" />
+                <div>
+                  <p className="font-semibold">Upload Thanas via CSV</p>
+                  <p className="text-xs text-muted-foreground">
+                    Columns: District ID, Thana Name, Thana ID, Address
+                  </p>
+                </div>
+              </div>
+              <div>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".csv"
+                  onChange={handleCSVUpload}
+                  className="hidden"
+                />
+                <Button 
+                  variant="outline" 
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={uploading}
+                >
+                  <Upload className={`h-4 w-4 mr-2 ${uploading ? 'animate-pulse' : ''}`} />
+                  {uploading ? "Uploading..." : "Upload CSV"}
+                </Button>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
 
         {/* Add/Edit Form */}
         {showForm && (
@@ -373,9 +560,44 @@ export default function ManageThanasPage() {
             </CardHeader>
             <CardContent className="pt-6">
               <form onSubmit={handleSubmit} className="space-y-4">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  
+                  {/* State */}
                   <div>
-                    <Label>District *</Label>
+                    <Label>State</Label>
+                    <select
+                      value={formData.state_id}
+                      onChange={(e) => setFormData({ ...formData, state_id: e.target.value, zone_id: "", district_id: "" })}
+                      className="w-full px-3 py-2 border rounded-lg bg-background text-sm mt-1"
+                    >
+                      <option value="">-- Select State --</option>
+                      {states.map(state => (
+                        <option key={state.id} value={state.id}>{state.name}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Zone (Optional) */}
+                  <div>
+                    <Label>Zone Name (Optional)</Label>
+                    <select
+                      value={formData.zone_id}
+                      onChange={(e) => setFormData({ ...formData, zone_id: e.target.value })}
+                      className="w-full px-3 py-2 border rounded-lg bg-background text-sm mt-1"
+                      disabled={!formData.state_id}
+                    >
+                      <option value="">-- Select Zone --</option>
+                      {filteredZones.map(zone => (
+                        <option key={zone.id} value={zone.id}>
+                          {zone.zone_name} ({zone.zone_code})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* District */}
+                  <div>
+                    <Label>District Name *</Label>
                     <select
                       value={formData.district_id}
                       onChange={(e) => setFormData({ ...formData, district_id: e.target.value })}
@@ -383,13 +605,28 @@ export default function ManageThanasPage() {
                       required
                     >
                       <option value="">-- Select District --</option>
-                      {districts.map(district => (
-                        <option key={district.id} value={district.id}>
-                          {district.name} {district.code ? `(${district.code})` : ""}
-                        </option>
+                      {(formData.state_id ? filteredDistricts : districts).map(district => (
+                        <option key={district.id} value={district.id}>{district.name}</option>
                       ))}
                     </select>
                   </div>
+
+                  {/* Type of Thana */}
+                  <div>
+                    <Label>Type of Thana</Label>
+                    <select
+                      value={formData.thana_type}
+                      onChange={(e) => setFormData({ ...formData, thana_type: e.target.value })}
+                      className="w-full px-3 py-2 border rounded-lg bg-background text-sm mt-1"
+                    >
+                      <option value="">-- Select Type --</option>
+                      {THANA_TYPES.map(type => (
+                        <option key={type.value} value={type.value}>{type.label}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Thana Name */}
                   <div>
                     <Label>Thana Name *</Label>
                     <Input
@@ -400,39 +637,33 @@ export default function ManageThanasPage() {
                       required
                     />
                   </div>
+
+                  {/* Thana ID */}
                   <div>
-                    <Label>Thana Code *</Label>
+                    <Label>Thana ID</Label>
                     <Input
                       className="mt-1"
-                      placeholder="e.g., GRPPJ"
-                      value={formData.thana_code}
-                      onChange={(e) => setFormData({ ...formData, thana_code: e.target.value.toUpperCase() })}
-                      required
+                      placeholder="e.g., GRPPJ001"
+                      value={formData.thana_id}
+                      onChange={(e) => setFormData({ ...formData, thana_id: e.target.value.toUpperCase() })}
                     />
                   </div>
-                  <div>
-                    <Label>Phone Number</Label>
-                    <div className="relative mt-1">
-                      <Phone className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                      <Input
-                        placeholder="e.g., 0612-1234567"
-                        value={formData.phone}
-                        onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
-                        className="pl-10"
-                      />
-                    </div>
-                  </div>
+
                 </div>
+
+                {/* Address */}
                 <div>
-                  <Label>Address</Label>
+                  <Label>Address of Thana</Label>
                   <Textarea
                     className="mt-1"
                     placeholder="Enter full address..."
                     value={formData.address}
                     onChange={(e) => setFormData({ ...formData, address: e.target.value })}
-                    rows={3}
+                    rows={2}
                   />
                 </div>
+
+                {/* Active */}
                 <div className="flex items-center gap-2">
                   <input
                     type="checkbox"
@@ -441,14 +672,11 @@ export default function ManageThanasPage() {
                     onChange={(e) => setFormData({ ...formData, is_active: e.target.checked })}
                     className="w-4 h-4 rounded"
                   />
-                  <Label htmlFor="is_active" className="cursor-pointer">
-                    Active Thana
-                  </Label>
+                  <Label htmlFor="is_active" className="cursor-pointer">Active Thana</Label>
                 </div>
+
                 <div className="flex justify-end gap-2 pt-2">
-                  <Button type="button" variant="outline" onClick={resetForm}>
-                    Cancel
-                  </Button>
+                  <Button type="button" variant="outline" onClick={resetForm}>Cancel</Button>
                   <Button type="submit">
                     <Save className="h-4 w-4 mr-2" />
                     {editingId ? "Update" : "Save"}
@@ -480,23 +708,23 @@ export default function ManageThanasPage() {
               <div className="py-12 text-center">
                 <Home className="h-12 w-12 mx-auto text-muted-foreground mb-3 opacity-50" />
                 <p className="text-muted-foreground">No thanas found</p>
-                {thanas.length === 0 && districts.length > 0 && (
-                  <Button className="mt-4" onClick={() => setShowForm(true)}>
-                    <Plus className="h-4 w-4 mr-2" />
-                    Add First Thana
-                  </Button>
-                )}
+                <Button className="mt-4" onClick={() => setShowForm(true)}>
+                  <Plus className="h-4 w-4 mr-2" />
+                  Add First Thana
+                </Button>
               </div>
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full">
                   <thead className="bg-muted/50 border-b-2">
                     <tr>
-                      <th className="px-4 py-3 text-left text-xs font-bold">#</th>
+                      <th className="px-4 py-3 text-left text-xs font-bold">S.NO.</th>
+                      <th className="px-4 py-3 text-left text-xs font-bold">STATE</th>
+                      <th className="px-4 py-3 text-left text-xs font-bold">ZONE</th>
                       <th className="px-4 py-3 text-left text-xs font-bold">DISTRICT</th>
+                      <th className="px-4 py-3 text-left text-xs font-bold">TYPE</th>
                       <th className="px-4 py-3 text-left text-xs font-bold">THANA NAME</th>
-                      <th className="px-4 py-3 text-left text-xs font-bold">CODE</th>
-                      <th className="px-4 py-3 text-left text-xs font-bold">PHONE</th>
+                      <th className="px-4 py-3 text-left text-xs font-bold">THANA ID</th>
                       <th className="px-4 py-3 text-center text-xs font-bold">STATUS</th>
                       <th className="px-4 py-3 text-right text-xs font-bold">ACTIONS</th>
                     </tr>
@@ -505,32 +733,38 @@ export default function ManageThanasPage() {
                     {filteredThanas.map((thana, index) => (
                       <tr key={thana.id} className="hover:bg-muted/30 transition-colors">
                         <td className="px-4 py-3 text-sm">{index + 1}</td>
+                        <td className="px-4 py-3 text-sm">{getStateName(thana.state_id)}</td>
+                        <td className="px-4 py-3">
+                          {thana.zone_id ? (
+                            <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200 text-xs">
+                              {getZoneName(thana.zone_id)}
+                            </Badge>
+                          ) : (
+                            <span className="text-muted-foreground text-sm">-</span>
+                          )}
+                        </td>
                         <td className="px-4 py-3">
                           <div className="flex items-center gap-2">
                             <Building className="h-3 w-3 text-muted-foreground" />
-                            <span className="text-sm font-medium">{getDistrictName(thana)}</span>
-                            {getDistrictCode(thana) && (
-                              <Badge variant="outline" className="text-xs">
-                                {getDistrictCode(thana)}
-                              </Badge>
-                            )}
+                            <span className="text-sm font-medium">
+                              {getDistrictName(getThanaDistrictId(thana))}
+                            </span>
                           </div>
+                        </td>
+                        <td className="px-4 py-3">
+                          {thana.thana_type ? (
+                            <Badge className={`${getThanaTypeBadge(thana.thana_type)} text-xs`}>
+                              {getThanaTypeLabel(thana.thana_type)}
+                            </Badge>
+                          ) : (
+                            <span className="text-muted-foreground text-sm">-</span>
+                          )}
                         </td>
                         <td className="px-4 py-3 font-medium">{getThanaName(thana)}</td>
                         <td className="px-4 py-3">
                           <Badge variant="outline" className="font-mono">
-                            {getThanaCode(thana)}
+                            {getThanaCode(thana) || "-"}
                           </Badge>
-                        </td>
-                        <td className="px-4 py-3">
-                          {thana.phone ? (
-                            <div className="flex items-center gap-1">
-                              <Phone className="h-3 w-3 text-muted-foreground" />
-                              <span className="text-sm">{thana.phone}</span>
-                            </div>
-                          ) : (
-                            <span className="text-muted-foreground">-</span>
-                          )}
                         </td>
                         <td className="px-4 py-3 text-center">
                           <Button
@@ -554,11 +788,7 @@ export default function ManageThanasPage() {
                         </td>
                         <td className="px-4 py-3">
                           <div className="flex items-center justify-end gap-2">
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => handleEdit(thana)}
-                            >
+                            <Button variant="outline" size="sm" onClick={() => handleEdit(thana)}>
                               <Edit className="h-3 w-3 mr-1" />
                               Edit
                             </Button>
