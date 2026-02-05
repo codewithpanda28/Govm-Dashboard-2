@@ -54,7 +54,12 @@ interface AccusedDetails {
   gender?: string
   mobile?: string
   aadhaar?: string
+  pan?: string
+  email?: string
   full_address?: string
+  state_name?: string
+  district_name?: string
+  pin_code?: string
   accused_type?: string
 }
 
@@ -63,9 +68,18 @@ interface BailerDetails {
   fir_id: number
   name: string
   father_name?: string
+  age?: number | string
+  gender?: string
   mobile?: string
   aadhaar?: string
+  pan?: string
+  email?: string
   full_address?: string
+  state_name?: string
+  district_name?: string
+  pin_code?: string
+  accused_id?: number
+  accused_name?: string
 }
 
 interface HearingDetails {
@@ -178,7 +192,20 @@ export default function FIRDetailPage() {
         setBailerList([])
       } else {
         console.log("✅ Bailers loaded:", bailerData?.length || 0)
-        setBailerList(bailerData || [])
+        
+        // 🆕 Map accused names to bailers
+        const bailersWithAccused = (bailerData || []).map(bailer => {
+          if (bailer.accused_id && accusedData) {
+            const accused = accusedData.find(a => a.id === bailer.accused_id)
+            return {
+              ...bailer,
+              accused_name: accused?.name || bailer.accused_name || null
+            }
+          }
+          return bailer
+        })
+        
+        setBailerList(bailersWithAccused)
       }
 
       // 4. Load hearing history
@@ -231,7 +258,9 @@ export default function FIRDetailPage() {
       registered: { color: "bg-blue-100 text-blue-700", label: "REGISTERED" },
       under_investigation: { color: "bg-yellow-100 text-yellow-700", label: "UNDER INVESTIGATION" },
       chargesheet_filed: { color: "bg-purple-100 text-purple-700", label: "CHARGESHEET FILED" },
+      in_court: { color: "bg-indigo-100 text-indigo-700", label: "IN COURT" },
       closed: { color: "bg-gray-100 text-gray-700", label: "CLOSED" },
+      disposed: { color: "bg-green-100 text-green-700", label: "DISPOSED" },
     }
 
     const key = status?.toLowerCase().replace(/ /g, "_") || "open"
@@ -240,27 +269,28 @@ export default function FIRDetailPage() {
   }
 
   const getAccusedTypeBadge = (type: string) => {
-    const config: Record<string, string> = {
-      unknown: "bg-gray-100 text-gray-700 border-gray-300",
-      known: "bg-blue-100 text-blue-700 border-blue-300",
-      arrested: "bg-red-100 text-red-700 border-red-300",
-      absconding: "bg-orange-100 text-orange-700 border-orange-300",
-      bailed: "bg-green-100 text-green-700 border-green-300"
+    const config: Record<string, { color: string; label: string }> = {
+      unknown: { color: "bg-gray-100 text-gray-700 border-gray-300", label: "UNKNOWN" },
+      known: { color: "bg-blue-100 text-blue-700 border-blue-300", label: "KNOWN" },
+      arrested: { color: "bg-red-100 text-red-700 border-red-300", label: "ARRESTED" },
+      absconding: { color: "bg-orange-100 text-orange-700 border-orange-300", label: "ABSCONDING" },
+      bailed: { color: "bg-green-100 text-green-700 border-green-300", label: "BAILED" }
     }
-    return config[type?.toLowerCase()] || config.unknown
+    const key = type?.toLowerCase() || "unknown"
+    const item = config[key] || config.unknown
+    return <Badge className={`${item.color} text-xs border`}>{item.label}</Badge>
   }
 
-  // ✅ FIXED: Back button ab /search pe jayega
   const goToEditFIR = () => router.push(`/fir/${firId}/edit`)
   const goBack = () => router.push("/search")
 
   // Loading state
   if (loading) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="text-center">
-          <RefreshCw className="h-10 w-10 text-primary animate-spin mx-auto mb-3" />
-          <p className="text-muted-foreground">Loading FIR Details...</p>
+          <RefreshCw className="h-10 w-10 text-blue-600 animate-spin mx-auto mb-3" />
+          <p className="text-gray-600">Loading FIR Details...</p>
         </div>
       </div>
     )
@@ -269,16 +299,16 @@ export default function FIRDetailPage() {
   // Error state
   if (error || !fir) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center p-4">
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
         <Card className="max-w-md w-full border-2 border-red-200">
           <CardContent className="py-12 text-center">
             <div className="w-16 h-16 rounded-full bg-red-100 flex items-center justify-center mx-auto mb-4">
               <AlertCircle className="h-8 w-8 text-red-600" />
             </div>
-            <p className="font-semibold text-lg mb-2">
+            <p className="font-semibold text-lg mb-2 text-gray-800">
               {error ? "Error Loading FIR" : "FIR Not Found"}
             </p>
-            <p className="text-sm text-muted-foreground mb-4">{error || `FIR with ID ${firId} not found`}</p>
+            <p className="text-sm text-gray-600 mb-4">{error || `FIR with ID ${firId} not found`}</p>
             <Button variant="outline" onClick={goBack}>
               <ArrowLeft className="mr-2 h-4 w-4" />
               Back to Search
@@ -290,23 +320,23 @@ export default function FIRDetailPage() {
   }
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-screen bg-gray-50">
       {/* Header */}
-      <div className="bg-gradient-to-r from-primary/10 via-primary/5 to-background border-b">
+      <div className="bg-white border-b">
         <div className="container mx-auto px-4 py-4">
           <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
             <div className="flex items-center gap-4">
-              <div className="p-2 bg-primary/10 rounded-lg border border-primary/20">
-                <FileText className="h-6 w-6 text-primary" />
+              <div className="p-2 bg-blue-100 rounded-lg border border-blue-200">
+                <FileText className="h-6 w-6 text-blue-600" />
               </div>
               <div>
                 <div className="flex items-center gap-3 flex-wrap">
-                  <h1 className="text-xl lg:text-2xl font-bold">
+                  <h1 className="text-xl lg:text-2xl font-bold text-gray-800">
                     FIR: {fir.fir_number}
                   </h1>
                   {getStatusBadge(fir.case_status)}
                 </div>
-                <div className="flex items-center gap-4 text-sm text-muted-foreground mt-1">
+                <div className="flex items-center gap-4 text-sm text-gray-600 mt-1">
                   <span className="flex items-center gap-1">
                     <Calendar className="h-3 w-3" />
                     {formatDate(fir.incident_date)}
@@ -325,10 +355,6 @@ export default function FIRDetailPage() {
                 <RefreshCw className={`mr-2 h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
                 Refresh
               </Button>
-              {/* <Button variant="outline" size="sm" onClick={goToEditFIR}>
-                <Edit className="mr-2 h-4 w-4" />
-                Edit
-              </Button> */}
               <Button variant="outline" size="sm" onClick={goBack}>
                 <ArrowLeft className="mr-2 h-4 w-4" />
                 Back
@@ -339,7 +365,7 @@ export default function FIRDetailPage() {
       </div>
 
       {/* Tabs */}
-      <div className="bg-background border-b">
+      <div className="bg-white border-b">
         <div className="container mx-auto px-4">
           <div className="flex gap-1 overflow-x-auto">
             {[
@@ -355,8 +381,8 @@ export default function FIRDetailPage() {
                   onClick={() => setActiveTab(tab.id)}
                   className={`flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${
                     activeTab === tab.id
-                      ? "border-primary text-primary"
-                      : "border-transparent text-muted-foreground hover:text-foreground"
+                      ? "border-blue-600 text-blue-600 bg-blue-50"
+                      : "border-transparent text-gray-600 hover:text-gray-800 hover:bg-gray-50"
                   }`}
                 >
                   <Icon className="h-4 w-4" />
@@ -376,45 +402,45 @@ export default function FIRDetailPage() {
           <div className="space-y-6">
             {/* Basic Details */}
             <Card className="border-2">
-              <CardHeader className="bg-muted/30 border-b pb-3">
+              <CardHeader className="bg-gray-50 border-b pb-3">
                 <CardTitle className="text-base flex items-center gap-2">
-                  <FileText className="h-4 w-4 text-primary" />
+                  <FileText className="h-4 w-4 text-blue-600" />
                   Basic Details
                 </CardTitle>
               </CardHeader>
               <CardContent className="pt-4">
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                   <div>
-                    <p className="text-xs text-muted-foreground">FIR Number</p>
-                    <p className="font-semibold mt-1">{fir.fir_number || "N/A"}</p>
+                    <p className="text-xs text-gray-500 font-medium">FIR Number</p>
+                    <p className="font-semibold text-gray-800 mt-1">{fir.fir_number || "N/A"}</p>
                   </div>
                   <div>
-                    <p className="text-xs text-muted-foreground">State</p>
-                    <p className="font-semibold mt-1">{fir.state_name || "N/A"}</p>
+                    <p className="text-xs text-gray-500 font-medium">State</p>
+                    <p className="font-semibold text-gray-800 mt-1">{fir.state_name || "N/A"}</p>
                   </div>
                   <div>
-                    <p className="text-xs text-muted-foreground">Zone</p>
-                    <p className="font-semibold mt-1">{fir.zone_name || "N/A"}</p>
+                    <p className="text-xs text-gray-500 font-medium">Zone</p>
+                    <p className="font-semibold text-gray-800 mt-1">{fir.zone_name || "N/A"}</p>
                   </div>
                   <div>
-                    <p className="text-xs text-muted-foreground">District</p>
-                    <p className="font-semibold mt-1">{fir.district_name || "N/A"}</p>
+                    <p className="text-xs text-gray-500 font-medium">District</p>
+                    <p className="font-semibold text-gray-800 mt-1">{fir.district_name || "N/A"}</p>
                   </div>
                   <div>
-                    <p className="text-xs text-muted-foreground">Thana</p>
-                    <p className="font-semibold mt-1">{fir.thana_name || "N/A"}</p>
+                    <p className="text-xs text-gray-500 font-medium">Thana</p>
+                    <p className="font-semibold text-gray-800 mt-1">{fir.thana_name || "N/A"}</p>
                   </div>
                   <div>
-                    <p className="text-xs text-muted-foreground">Court</p>
-                    <p className="font-semibold mt-1">{fir.court_name || "N/A"}</p>
+                    <p className="text-xs text-gray-500 font-medium">Court</p>
+                    <p className="font-semibold text-gray-800 mt-1">{fir.court_name || "N/A"}</p>
                   </div>
                   <div>
-                    <p className="text-xs text-muted-foreground">Sections</p>
-                    <p className="font-semibold mt-1">{fir.law_sections_text || "N/A"}</p>
+                    <p className="text-xs text-gray-500 font-medium">Sections</p>
+                    <p className="font-semibold text-gray-800 mt-1">{fir.law_sections_text || "N/A"}</p>
                   </div>
                   <div>
-                    <p className="text-xs text-muted-foreground">Accused Type</p>
-                    <p className="font-semibold mt-1">{fir.accused_type?.toUpperCase() || "N/A"}</p>
+                    <p className="text-xs text-gray-500 font-medium">Accused Type</p>
+                    <p className="font-semibold text-gray-800 mt-1">{fir.accused_type?.toUpperCase() || "N/A"}</p>
                   </div>
                 </div>
               </CardContent>
@@ -423,11 +449,11 @@ export default function FIRDetailPage() {
             {/* Description */}
             {fir.brief_description && (
               <Card className="border-2">
-                <CardHeader className="bg-muted/30 border-b pb-3">
+                <CardHeader className="bg-gray-50 border-b pb-3">
                   <CardTitle className="text-base">Case Description</CardTitle>
                 </CardHeader>
                 <CardContent className="pt-4">
-                  <p className="text-sm whitespace-pre-wrap">{fir.brief_description}</p>
+                  <p className="text-sm text-gray-700 whitespace-pre-wrap">{fir.brief_description}</p>
                 </CardContent>
               </Card>
             )}
@@ -435,29 +461,29 @@ export default function FIRDetailPage() {
             {/* Train Details */}
             {(fir.train_number_manual || fir.station_code) && (
               <Card className="border-2">
-                <CardHeader className="bg-muted/30 border-b pb-3">
+                <CardHeader className="bg-gray-50 border-b pb-3">
                   <CardTitle className="text-base flex items-center gap-2">
-                    <Train className="h-4 w-4 text-primary" />
+                    <Train className="h-4 w-4 text-blue-600" />
                     Train & Station Details
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="pt-4">
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                     <div>
-                      <p className="text-xs text-muted-foreground">Train Number</p>
-                      <p className="font-semibold mt-1">{fir.train_number_manual || "N/A"}</p>
+                      <p className="text-xs text-gray-500 font-medium">Train Number</p>
+                      <p className="font-semibold text-gray-800 mt-1">{fir.train_number_manual || "N/A"}</p>
                     </div>
                     <div>
-                      <p className="text-xs text-muted-foreground">Train Name</p>
-                      <p className="font-semibold mt-1">{fir.train_name_manual || "N/A"}</p>
+                      <p className="text-xs text-gray-500 font-medium">Train Name</p>
+                      <p className="font-semibold text-gray-800 mt-1">{fir.train_name_manual || "N/A"}</p>
                     </div>
                     <div>
-                      <p className="text-xs text-muted-foreground">Station Code</p>
-                      <p className="font-semibold mt-1">{fir.station_code || "N/A"}</p>
+                      <p className="text-xs text-gray-500 font-medium">Station Code</p>
+                      <p className="font-semibold text-gray-800 mt-1">{fir.station_code || "N/A"}</p>
                     </div>
                     <div>
-                      <p className="text-xs text-muted-foreground">Station Name</p>
-                      <p className="font-semibold mt-1">{fir.station_name_manual || "N/A"}</p>
+                      <p className="text-xs text-gray-500 font-medium">Station Name</p>
+                      <p className="font-semibold text-gray-800 mt-1">{fir.station_name_manual || "N/A"}</p>
                     </div>
                   </div>
                 </CardContent>
@@ -466,167 +492,180 @@ export default function FIRDetailPage() {
           </div>
         )}
 
-        {/* ACCUSED TAB */}
+        {/* ACCUSED TAB - TABLE FORMAT */}
         {activeTab === "accused" && (
           <Card className="border-2">
-            <CardHeader className="bg-muted/30 border-b pb-3">
+            <CardHeader className="bg-gray-50 border-b pb-3">
               <CardTitle className="text-base flex items-center gap-2">
-                <Users className="h-4 w-4 text-primary" />
+                <Users className="h-4 w-4 text-red-600" />
                 Accused Persons ({accusedList.length})
               </CardTitle>
             </CardHeader>
             <CardContent className="pt-4">
               {accusedList.length === 0 ? (
                 <div className="text-center py-12">
-                  <Users className="h-12 w-12 mx-auto text-muted-foreground mb-3 opacity-50" />
-                  <p className="text-muted-foreground">No accused persons added</p>
+                  <Users className="h-12 w-12 mx-auto text-gray-300 mb-3" />
+                  <p className="text-gray-500">No accused persons added</p>
                 </div>
               ) : (
-                <div className="space-y-3">
-                  {accusedList.map((accused, index) => (
-                    <div key={accused.id} className="border-2 rounded-lg p-4 hover:border-primary/50 transition-colors">
-                      <div className="flex items-start gap-4">
-                        <div className="w-12 h-12 rounded-full bg-red-100 flex items-center justify-center flex-shrink-0">
-                          <User className="h-6 w-6 text-red-600" />
-                        </div>
-                        <div className="flex-1">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <h3 className="font-semibold">{accused.name || "Unknown"}</h3>
-                            {accused.accused_type && (
-                              <Badge className={`${getAccusedTypeBadge(accused.accused_type)} text-xs border`}>
-                                {accused.accused_type.toUpperCase()}
-                              </Badge>
-                            )}
-                          </div>
-                          {accused.father_name && (
-                            <p className="text-sm text-muted-foreground">S/o {accused.father_name}</p>
-                          )}
-                          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2 mt-3">
-                            {accused.age && (
-                              <p className="text-xs"><span className="text-muted-foreground">Age:</span> {accused.age}</p>
-                            )}
-                            {accused.gender && (
-                              <p className="text-xs"><span className="text-muted-foreground">Gender:</span> {accused.gender}</p>
-                            )}
-                            {accused.mobile && (
-                              <p className="text-xs flex items-center gap-1">
-                                <Phone className="h-3 w-3" />
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm border">
+                    <thead className="bg-gray-100 border-b-2">
+                      <tr>
+                        <th className="px-3 py-3 text-left text-xs font-bold text-gray-700">#</th>
+                        <th className="px-3 py-3 text-left text-xs font-bold text-gray-700">NAME</th>
+                        <th className="px-3 py-3 text-left text-xs font-bold text-gray-700">FATHER'S NAME</th>
+                        <th className="px-3 py-3 text-left text-xs font-bold text-gray-700">AGE/GENDER</th>
+                        <th className="px-3 py-3 text-left text-xs font-bold text-gray-700">STATUS</th>
+                        <th className="px-3 py-3 text-left text-xs font-bold text-gray-700">MOBILE</th>
+                        <th className="px-3 py-3 text-left text-xs font-bold text-gray-700">AADHAAR</th>
+                        <th className="px-3 py-3 text-left text-xs font-bold text-gray-700">PAN</th>
+                        <th className="px-3 py-3 text-left text-xs font-bold text-gray-700">EMAIL</th>
+                        <th className="px-3 py-3 text-left text-xs font-bold text-gray-700">ADDRESS</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y bg-white">
+                      {accusedList.map((accused, index) => (
+                        <tr key={accused.id} className="hover:bg-gray-50">
+                          <td className="px-3 py-3">{index + 1}</td>
+                          <td className="px-3 py-3 font-medium text-gray-800">{accused.name || "Unknown"}</td>
+                          <td className="px-3 py-3">{accused.father_name || "-"}</td>
+                          <td className="px-3 py-3">
+                            {accused.age || "-"} / {accused.gender || "-"}
+                          </td>
+                          <td className="px-3 py-3">
+                            {getAccusedTypeBadge(accused.accused_type || "unknown")}
+                          </td>
+                          <td className="px-3 py-3">
+                            {accused.mobile ? (
+                              <span className="flex items-center gap-1">
+                                <Phone className="h-3 w-3 text-green-600" />
                                 {accused.mobile}
-                              </p>
-                            )}
-                            {accused.aadhaar && (
-                              <p className="text-xs flex items-center gap-1">
-                                <CreditCard className="h-3 w-3" />
-                                {accused.aadhaar}
-                              </p>
-                            )}
-                          </div>
-                          {accused.full_address && (
-                            <p className="text-xs text-muted-foreground mt-2 flex items-start gap-1">
-                              <MapPin className="h-3 w-3 mt-0.5" />
-                              {accused.full_address}
-                            </p>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  ))}
+                              </span>
+                            ) : "-"}
+                          </td>
+                          <td className="px-3 py-3 font-mono text-xs">{accused.aadhaar || "-"}</td>
+                          <td className="px-3 py-3 font-mono text-xs">{accused.pan || "-"}</td>
+                          <td className="px-3 py-3 text-xs">{accused.email || "-"}</td>
+                          <td className="px-3 py-3 max-w-xs">
+                            <p className="truncate text-xs">{accused.full_address || "-"}</p>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
               )}
             </CardContent>
           </Card>
         )}
 
-        {/* BAILERS TAB */}
+        {/* BAILERS TAB - TABLE FORMAT WITH ACCUSED NAME */}
         {activeTab === "bailer" && (
           <Card className="border-2">
-            <CardHeader className="bg-muted/30 border-b pb-3">
+            <CardHeader className="bg-gray-50 border-b pb-3">
               <CardTitle className="text-base flex items-center gap-2">
-                <User className="h-4 w-4 text-primary" />
+                <Shield className="h-4 w-4 text-blue-600" />
                 Bailer Details ({bailerList.length})
               </CardTitle>
             </CardHeader>
             <CardContent className="pt-4">
               {bailerList.length === 0 ? (
                 <div className="text-center py-12">
-                  <User className="h-12 w-12 mx-auto text-muted-foreground mb-3 opacity-50" />
-                  <p className="text-muted-foreground">No bailers added</p>
+                  <Shield className="h-12 w-12 mx-auto text-gray-300 mb-3" />
+                  <p className="text-gray-500">No bailers added</p>
                 </div>
               ) : (
-                <div className="space-y-3">
-                  {bailerList.map((bailer, index) => (
-                    <div key={bailer.id} className="border-2 rounded-lg p-4 hover:border-primary/50 transition-colors">
-                      <div className="flex items-start gap-4">
-                        <div className="w-12 h-12 rounded-full bg-blue-100 flex items-center justify-center flex-shrink-0">
-                          <User className="h-6 w-6 text-blue-600" />
-                        </div>
-                        <div className="flex-1">
-                          <h3 className="font-semibold">{bailer.name || "N/A"}</h3>
-                          {bailer.father_name && (
-                            <p className="text-sm text-muted-foreground">S/o {bailer.father_name}</p>
-                          )}
-                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-3">
-                            {bailer.mobile && (
-                              <p className="text-xs flex items-center gap-1">
-                                <Phone className="h-3 w-3" />
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm border">
+                    <thead className="bg-gray-100 border-b-2">
+                      <tr>
+                        <th className="px-3 py-3 text-left text-xs font-bold text-gray-700">#</th>
+                        <th className="px-3 py-3 text-left text-xs font-bold text-gray-700">NAME</th>
+                        <th className="px-3 py-3 text-left text-xs font-bold text-gray-700">FATHER'S NAME</th>
+                        <th className="px-3 py-3 text-left text-xs font-bold text-gray-700">BAILER FOR (ACCUSED)</th>
+                        <th className="px-3 py-3 text-left text-xs font-bold text-gray-700">AGE/GENDER</th>
+                        <th className="px-3 py-3 text-left text-xs font-bold text-gray-700">MOBILE</th>
+                        <th className="px-3 py-3 text-left text-xs font-bold text-gray-700">AADHAAR</th>
+                        <th className="px-3 py-3 text-left text-xs font-bold text-gray-700">PAN</th>
+                        <th className="px-3 py-3 text-left text-xs font-bold text-gray-700">EMAIL</th>
+                        <th className="px-3 py-3 text-left text-xs font-bold text-gray-700">ADDRESS</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y bg-white">
+                      {bailerList.map((bailer, index) => (
+                        <tr key={bailer.id} className="hover:bg-gray-50">
+                          <td className="px-3 py-3">{index + 1}</td>
+                          <td className="px-3 py-3 font-medium text-gray-800">{bailer.name || "N/A"}</td>
+                          <td className="px-3 py-3">{bailer.father_name || "-"}</td>
+                          <td className="px-3 py-3">
+                            {bailer.accused_name ? (
+                              <Badge className="bg-blue-100 text-blue-700 text-xs">
+                                {bailer.accused_name}
+                              </Badge>
+                            ) : (
+                              <span className="text-gray-400 text-xs italic">Not Linked</span>
+                            )}
+                          </td>
+                          <td className="px-3 py-3">
+                            {bailer.age || "-"} / {bailer.gender || "-"}
+                          </td>
+                          <td className="px-3 py-3">
+                            {bailer.mobile ? (
+                              <span className="flex items-center gap-1">
+                                <Phone className="h-3 w-3 text-green-600" />
                                 {bailer.mobile}
-                              </p>
-                            )}
-                            {bailer.aadhaar && (
-                              <p className="text-xs flex items-center gap-1">
-                                <CreditCard className="h-3 w-3" />
-                                {bailer.aadhaar}
-                              </p>
-                            )}
-                          </div>
-                          {bailer.full_address && (
-                            <p className="text-xs text-muted-foreground mt-2 flex items-start gap-1">
-                              <MapPin className="h-3 w-3 mt-0.5" />
-                              {bailer.full_address}
-                            </p>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  ))}
+                              </span>
+                            ) : "-"}
+                          </td>
+                          <td className="px-3 py-3 font-mono text-xs">{bailer.aadhaar || "-"}</td>
+                          <td className="px-3 py-3 font-mono text-xs">{bailer.pan || "-"}</td>
+                          <td className="px-3 py-3 text-xs">{bailer.email || "-"}</td>
+                          <td className="px-3 py-3 max-w-xs">
+                            <p className="truncate text-xs">{bailer.full_address || "-"}</p>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
               )}
             </CardContent>
           </Card>
         )}
 
-        {/* HEARINGS TAB */}
+        {/* HEARINGS TAB - TABLE FORMAT */}
         {activeTab === "hearings" && (
           <Card className="border-2">
-            <CardHeader className="bg-muted/30 border-b pb-3">
+            <CardHeader className="bg-gray-50 border-b pb-3">
               <CardTitle className="text-base flex items-center gap-2">
-                <Gavel className="h-4 w-4 text-primary" />
+                <Gavel className="h-4 w-4 text-purple-600" />
                 Hearing History ({hearingList.length})
               </CardTitle>
             </CardHeader>
             <CardContent className="pt-4">
               {hearingList.length === 0 ? (
                 <div className="text-center py-12">
-                  <Gavel className="h-12 w-12 mx-auto text-muted-foreground mb-3 opacity-50" />
-                  <p className="text-muted-foreground">No hearings scheduled</p>
+                  <Gavel className="h-12 w-12 mx-auto text-gray-300 mb-3" />
+                  <p className="text-gray-500">No hearings scheduled</p>
                 </div>
               ) : (
                 <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead className="bg-muted/50">
+                  <table className="w-full text-sm border">
+                    <thead className="bg-gray-100 border-b-2">
                       <tr>
-                        <th className="px-3 py-2 text-left font-semibold">S.No.</th>
-                        <th className="px-3 py-2 text-left font-semibold">Date</th>
-                        <th className="px-3 py-2 text-left font-semibold">Time</th>
-                        <th className="px-3 py-2 text-left font-semibold">Court</th>
-                        <th className="px-3 py-2 text-left font-semibold">Purpose</th>
-                        <th className="px-3 py-2 text-left font-semibold">Status</th>
-                        <th className="px-3 py-2 text-left font-semibold">Remarks</th>
+                        <th className="px-3 py-3 text-left text-xs font-bold text-gray-700">#</th>
+                        <th className="px-3 py-3 text-left text-xs font-bold text-gray-700">DATE</th>
+                        <th className="px-3 py-3 text-left text-xs font-bold text-gray-700">TIME</th>
+                        <th className="px-3 py-3 text-left text-xs font-bold text-gray-700">COURT</th>
+                        <th className="px-3 py-3 text-left text-xs font-bold text-gray-700">PURPOSE</th>
+                        <th className="px-3 py-3 text-left text-xs font-bold text-gray-700">STATUS</th>
+                        <th className="px-3 py-3 text-left text-xs font-bold text-gray-700">REMARKS</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y">
+                    <tbody className="divide-y bg-white">
                       {hearingList.map((hearing, index) => (
-                        <tr key={hearing.id} className="hover:bg-muted/30">
+                        <tr key={hearing.id} className="hover:bg-gray-50">
                           <td className="px-3 py-3">{index + 1}</td>
                           <td className="px-3 py-3 font-medium">{formatDate(hearing.hearing_date)}</td>
                           <td className="px-3 py-3">{hearing.hearing_time || "-"}</td>
@@ -637,7 +676,7 @@ export default function FIRDetailPage() {
                               {hearing.status || "Scheduled"}
                             </Badge>
                           </td>
-                          <td className="px-3 py-3 text-muted-foreground">{hearing.remarks || "-"}</td>
+                          <td className="px-3 py-3 text-gray-600">{hearing.remarks || "-"}</td>
                         </tr>
                       ))}
                     </tbody>

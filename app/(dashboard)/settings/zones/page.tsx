@@ -9,7 +9,7 @@ import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
 import {
   Map, Plus, Edit, Trash2, RefreshCw, Search,
-  CheckCircle, XCircle, Save, X, MapPin
+  CheckCircle, XCircle, Save, X, MapPin, Upload
 } from "lucide-react"
 import { toast } from "sonner"
 
@@ -38,6 +38,7 @@ export default function ManageZonesPage() {
   const [selectedState, setSelectedState] = useState<string>("all")
   const [showForm, setShowForm] = useState(false)
   const [editingId, setEditingId] = useState<number | null>(null)
+  const [uploading, setUploading] = useState(false) // 🆕
   
   const [formData, setFormData] = useState({
     state_id: "",
@@ -92,6 +93,81 @@ export default function ManageZonesPage() {
     }
   }
 
+  // 🆕 CSV Upload Handler
+  const handleCSVUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+
+    if (!file.name.endsWith('.csv')) {
+      toast.error("Please upload a CSV file")
+      return
+    }
+
+    setUploading(true)
+    
+    try {
+      const text = await file.text()
+      const rows = text.split('\n').filter(row => row.trim())
+      const dataRows = rows.slice(1) // Skip header
+      
+      if (dataRows.length === 0) {
+        toast.error("No data found in CSV file")
+        setUploading(false)
+        return
+      }
+
+      const zonesData: any[] = []
+      
+      dataRows.forEach((row) => {
+        const columns = row.split(',').map(col => col.trim().replace(/^["']|["']$/g, ''))
+        
+        if (columns.length >= 3) {
+          const [stateName, zoneName, zoneCode, isActive] = columns
+          
+          if (stateName && zoneName && zoneCode) {
+            // Find state by name or code
+            const state = states.find(s => 
+              s.name.toLowerCase() === stateName.toLowerCase() || 
+              s.code.toLowerCase() === stateName.toLowerCase()
+            )
+            
+            if (state) {
+              zonesData.push({
+                state_id: state.id,
+                zone_name: zoneName.trim(),
+                zone_code: zoneCode.trim().toUpperCase(),
+                is_active: isActive ? (isActive.toLowerCase() === 'true' || isActive === '1' || isActive.toLowerCase() === 'yes') : true
+              })
+            }
+          }
+        }
+      })
+
+      if (zonesData.length === 0) {
+        toast.error("No valid data to import")
+        setUploading(false)
+        return
+      }
+
+      // Insert data
+      const { error } = await supabase
+        .from("zones")
+        .upsert(zonesData, { onConflict: 'zone_code' })
+
+      if (error) throw error
+
+      toast.success(`Successfully imported ${zonesData.length} zone(s)`)
+      loadZones()
+
+    } catch (err: any) {
+      console.error("CSV upload error:", err)
+      toast.error("Failed to process CSV file")
+    } finally {
+      setUploading(false)
+      e.target.value = ''
+    }
+  }
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     
@@ -102,7 +178,6 @@ export default function ManageZonesPage() {
 
     try {
       if (editingId) {
-        // Update
         const { error } = await supabase
           .from("zones")
           .update({
@@ -117,7 +192,6 @@ export default function ManageZonesPage() {
         if (error) throw error
         toast.success("Zone updated successfully!")
       } else {
-        // Insert
         const { error } = await supabase
           .from("zones")
           .insert({
@@ -248,6 +322,21 @@ export default function ManageZonesPage() {
             ))}
           </select>
           <div className="flex gap-2">
+            {/* 🆕 CSV Upload Button */}
+            <Button variant="outline" disabled={uploading}>
+              <input
+                type="file"
+                accept=".csv"
+                onChange={handleCSVUpload}
+                className="hidden"
+                id="csv-upload"
+              />
+              <label htmlFor="csv-upload" className="cursor-pointer flex items-center">
+                <Upload className={`h-4 w-4 mr-2 ${uploading ? 'animate-spin' : ''}`} />
+                {uploading ? 'Uploading...' : 'Upload CSV'}
+              </label>
+            </Button>
+
             <Button variant="outline" onClick={loadZones} disabled={loading}>
               <RefreshCw className={`h-4 w-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
               Refresh

@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
 import { createClient } from "@/lib/supabase/client"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -26,7 +26,10 @@ import {
   UserX,
   Scale,
   Hash,
-  Calendar
+  Calendar,
+  X,
+  Eye,
+  Loader2
 } from "lucide-react"
 import { toast } from 'sonner'
 
@@ -47,6 +50,17 @@ interface SearchResult {
   gender?: string
 }
 
+interface FIRRecord {
+  id: number
+  fir_number: string
+  case_status: string
+  incident_date: string
+  district_name: string
+  thana_name: string
+  accused_type: string
+  created_at: string
+}
+
 export default function SearchPage() {
   const router = useRouter()
   const supabase = createClient()
@@ -55,6 +69,39 @@ export default function SearchPage() {
   const [loading, setLoading] = useState(false)
   const [results, setResults] = useState<SearchResult[]>([])
   const [searched, setSearched] = useState(false)
+  
+  // FIR List States
+  const [firList, setFirList] = useState<FIRRecord[]>([])
+  const [firLoading, setFirLoading] = useState(true)
+
+  // Load FIR list on mount
+  useEffect(() => {
+    loadFIRList()
+  }, [])
+
+  const loadFIRList = async () => {
+    try {
+      setFirLoading(true)
+      
+      const { data, error } = await supabase
+        .from("fir_records")
+        .select("*")
+        .order("created_at", { ascending: false })
+        .limit(50)
+
+      if (error) {
+        console.error("FIR load error:", error)
+        toast.error("Failed to load FIRs")
+        return
+      }
+
+      setFirList(data || [])
+    } catch (err) {
+      console.error("Error:", err)
+    } finally {
+      setFirLoading(false)
+    }
+  }
 
   const handleSearch = async () => {
     if (!searchQuery.trim()) {
@@ -225,6 +272,12 @@ export default function SearchPage() {
     }
   }
 
+  const handleClearSearch = () => {
+    setSearchQuery("")
+    setSearched(false)
+    setResults([])
+  }
+
   const getAccusedTypeConfig = (type: string | undefined) => {
     const config: Record<string, { bg: string; text: string; border: string; icon: any; label: string }> = {
       unknown: { 
@@ -266,33 +319,47 @@ export default function SearchPage() {
     return config[type?.toLowerCase() || "unknown"] || config.unknown
   }
 
+  const getStatusBadge = (status: string) => {
+    const statusLower = status?.toLowerCase().replace(/ /g, "_") || "open"
+    const config: Record<string, { bg: string; text: string; label: string }> = {
+      open: { bg: "bg-orange-100", text: "text-orange-700", label: "OPEN" },
+      registered: { bg: "bg-blue-100", text: "text-blue-700", label: "REGISTERED" },
+      under_investigation: { bg: "bg-yellow-100", text: "text-yellow-700", label: "INVESTIGATING" },
+      chargesheet_filed: { bg: "bg-purple-100", text: "text-purple-700", label: "CHARGESHEET" },
+      in_court: { bg: "bg-indigo-100", text: "text-indigo-700", label: "IN COURT" },
+      closed: { bg: "bg-gray-100", text: "text-gray-700", label: "CLOSED" },
+      disposed: { bg: "bg-green-100", text: "text-green-700", label: "DISPOSED" }
+    }
+    const { bg, text, label } = config[statusLower] || config.open
+    return <Badge className={`${bg} ${text}`}>{label}</Badge>
+  }
+
+  const formatDate = (dateStr: string) => {
+    if (!dateStr) return "-"
+    try {
+      return new Date(dateStr).toLocaleDateString("en-IN", {
+        day: "2-digit",
+        month: "short",
+        year: "numeric"
+      })
+    } catch {
+      return dateStr
+    }
+  }
+
   const accusedCount = results.filter(r => r.type === "accused").length
   const bailerCount = results.filter(r => r.type === "bailer").length
 
   return (
-    <div className="min-h-screen bg-background p-4 lg:p-6">
+    <div className="min-h-screen bg-gray-50 p-4 lg:p-6">
       <div className="max-w-6xl mx-auto">
-        {/* Compact Header */}
-        {/* <div className="mb-6">
-          <div className="flex items-center gap-3 mb-2">
-            <div className="p-2 bg-primary/10 rounded-lg">
-              <Search className="h-6 w-6 text-primary" />
-            </div>
-            <div>
-              <h1 className="text-2xl font-bold">Search Records</h1>
-              <p className="text-muted-foreground text-sm">
-                Search accused & bailers by mobile, aadhaar or name
-              </p>
-            </div>
-          </div>
-        </div> */}
-
+        
         {/* Search Box */}
         <Card className="border-2 mb-6">
-          <CardHeader className="bg-muted/30 border-b pb-4">
+          <CardHeader className="bg-gray-50 border-b pb-4">
             <CardTitle className="text-lg flex items-center gap-2">
-              <Filter className="h-5 w-5 text-primary" />
-              Search Filters
+              <Search className="h-5 w-5 text-blue-600" />
+              Search Accused & Bailers
             </CardTitle>
           </CardHeader>
           <CardContent className="pt-6">
@@ -300,19 +367,19 @@ export default function SearchPage() {
               {/* Search Input Row */}
               <div className="flex flex-col sm:flex-row gap-3">
                 <div className="flex-1 relative">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
                   <Input
                     placeholder="Enter mobile, aadhaar, or name..."
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                     onKeyDown={(e) => e.key === "Enter" && handleSearch()}
-                    className="pl-10"
+                    className="pl-10 bg-white"
                   />
                 </div>
                 <select
                   value={searchType}
                   onChange={(e) => setSearchType(e.target.value as any)}
-                  className="px-4 py-2 border rounded-lg bg-background text-sm"
+                  className="px-4 py-2 border rounded-lg bg-white text-sm"
                 >
                   <option value="all">All Records</option>
                   <option value="accused">Accused Only</option>
@@ -321,6 +388,7 @@ export default function SearchPage() {
                 <Button 
                   onClick={handleSearch} 
                   disabled={loading || !searchQuery.trim()}
+                  className="bg-blue-600 hover:bg-blue-700"
                 >
                   {loading ? (
                     <RefreshCw className="h-4 w-4 animate-spin" />
@@ -331,11 +399,20 @@ export default function SearchPage() {
                     </>
                   )}
                 </Button>
+                {searched && (
+                  <Button 
+                    onClick={handleClearSearch} 
+                    variant="outline"
+                  >
+                    <X className="h-4 w-4 mr-2" />
+                    Clear
+                  </Button>
+                )}
               </div>
 
               {/* Quick Examples */}
               <div className="flex flex-wrap gap-2 items-center">
-                <span className="text-xs text-muted-foreground font-medium">QUICK:</span>
+                <span className="text-xs text-gray-500 font-medium">QUICK:</span>
                 <Button 
                   variant="outline" 
                   size="sm"
@@ -368,13 +445,13 @@ export default function SearchPage() {
           </CardContent>
         </Card>
 
-        {/* Results Section */}
+        {/* Search Results Section */}
         {searched && (
           <>
             {/* Results Summary */}
             {results.length > 0 && !loading && (
               <div className="flex items-center justify-between mb-4">
-                <h2 className="text-lg font-semibold">
+                <h2 className="text-lg font-semibold text-gray-800">
                   Found {results.length} Records
                 </h2>
                 <div className="flex gap-2">
@@ -394,8 +471,8 @@ export default function SearchPage() {
             {loading && (
               <Card className="border-2">
                 <CardContent className="py-12 text-center">
-                  <RefreshCw className="h-8 w-8 animate-spin mx-auto text-primary mb-3" />
-                  <p className="text-muted-foreground">Searching records...</p>
+                  <RefreshCw className="h-8 w-8 animate-spin mx-auto text-blue-600 mb-3" />
+                  <p className="text-gray-500">Searching records...</p>
                 </CardContent>
               </Card>
             )}
@@ -404,9 +481,9 @@ export default function SearchPage() {
             {!loading && results.length === 0 && (
               <Card className="border-2 border-dashed">
                 <CardContent className="py-12 text-center">
-                  <Search className="h-12 w-12 mx-auto text-muted-foreground mb-3 opacity-50" />
-                  <p className="font-semibold">No Results Found</p>
-                  <p className="text-muted-foreground text-sm mt-1">
+                  <Search className="h-12 w-12 mx-auto text-gray-300 mb-3" />
+                  <p className="font-semibold text-gray-700">No Results Found</p>
+                  <p className="text-gray-500 text-sm mt-1">
                     Try searching with different keywords
                   </p>
                 </CardContent>
@@ -424,7 +501,7 @@ export default function SearchPage() {
                   return (
                     <Card 
                       key={`${result.type}-${result.id}-${index}`}
-                      className="border-2 hover:border-primary/50 hover:shadow-md transition-all cursor-pointer"
+                      className="border-2 hover:border-blue-400 hover:shadow-md transition-all cursor-pointer"
                       onClick={() => router.push(`/fir/${result.fir_id}`)}
                     >
                       <CardContent className="pt-6">
@@ -448,11 +525,11 @@ export default function SearchPage() {
                             <div className="flex items-start justify-between">
                               <div className="space-y-1">
                                 <div className="flex items-center gap-2 flex-wrap">
-                                  <h3 className="font-semibold text-lg">
+                                  <h3 className="font-semibold text-lg text-gray-800">
                                     {result.name}
                                   </h3>
                                   <Badge 
-                                    variant={result.type === "accused" ? "destructive" : "default"}
+                                    className={result.type === "accused" ? "bg-red-100 text-red-700" : "bg-blue-100 text-blue-700"}
                                   >
                                     {result.type === "accused" ? "ACCUSED" : "BAILER"}
                                   </Badge>
@@ -470,14 +547,14 @@ export default function SearchPage() {
                                   )}
                                 </div>
                                 {(result.father_name || result.age) && (
-                                  <p className="text-sm text-muted-foreground">
+                                  <p className="text-sm text-gray-600">
                                     {result.father_name && `S/o ${result.father_name}`}
                                     {result.age && ` • Age: ${result.age}`}
                                     {result.gender && ` • ${result.gender}`}
                                   </p>
                                 )}
                               </div>
-                              <ChevronRight className="h-5 w-5 text-muted-foreground" />
+                              <ChevronRight className="h-5 w-5 text-gray-400" />
                             </div>
 
                             {/* Details Grid */}
@@ -503,7 +580,7 @@ export default function SearchPage() {
                               {result.address && (
                                 <div className="flex items-center gap-2 text-sm flex-1">
                                   <MapPin className="h-4 w-4 text-gray-600" />
-                                  <span className="text-muted-foreground truncate">
+                                  <span className="text-gray-600 truncate">
                                     {result.address}
                                   </span>
                                 </div>
@@ -520,33 +597,94 @@ export default function SearchPage() {
           </>
         )}
 
-        {/* Initial State */}
+        {/* FIR List Section (Default View) */}
         {!searched && (
-          <Card className="border-2 border-dashed">
-            <CardContent className="py-12 text-center">
-              <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-primary/10 mb-4">
-                <Search className="h-8 w-8 text-primary" />
+          <>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-semibold text-gray-800 flex items-center gap-2">
+                <FileText className="h-5 w-5" />
+                Recent FIR Records ({firList.length})
+              </h2>
+              <Button 
+                variant="outline" 
+                size="sm" 
+                onClick={loadFIRList}
+                disabled={firLoading}
+              >
+                <RefreshCw className={`h-4 w-4 mr-2 ${firLoading ? 'animate-spin' : ''}`} />
+                Refresh
+              </Button>
+            </div>
+
+            {/* FIR Loading */}
+            {firLoading && (
+              <Card className="border-2">
+                <CardContent className="py-12 text-center">
+                  <Loader2 className="h-8 w-8 animate-spin mx-auto text-blue-600 mb-3" />
+                  <p className="text-gray-500">Loading FIR records...</p>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* FIR List */}
+            {!firLoading && firList.length === 0 && (
+              <Card className="border-2 border-dashed">
+                <CardContent className="py-12 text-center">
+                  <FileText className="h-12 w-12 mx-auto text-gray-300 mb-3" />
+                  <p className="font-semibold text-gray-700">No FIR Records</p>
+                  <p className="text-gray-500 text-sm mt-1">
+                    No FIR records found in the system
+                  </p>
+                </CardContent>
+              </Card>
+            )}
+
+            {!firLoading && firList.length > 0 && (
+              <div className="overflow-x-auto">
+                <table className="w-full border-2 border-gray-200 rounded-lg overflow-hidden">
+                  <thead className="bg-gray-100 border-b-2">
+                    <tr>
+                      <th className="px-4 py-3 text-left text-xs font-bold text-gray-700">#</th>
+                      <th className="px-4 py-3 text-left text-xs font-bold text-gray-700">FIR NUMBER</th>
+                      <th className="px-4 py-3 text-left text-xs font-bold text-gray-700">DATE</th>
+                      <th className="px-4 py-3 text-left text-xs font-bold text-gray-700">DISTRICT</th>
+                      <th className="px-4 py-3 text-left text-xs font-bold text-gray-700">THANA</th>
+                      <th className="px-4 py-3 text-left text-xs font-bold text-gray-700">CRIME TYPE</th>
+                      <th className="px-4 py-3 text-left text-xs font-bold text-gray-700">STATUS</th>
+                      <th className="px-4 py-3 text-left text-xs font-bold text-gray-700">ACTION</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y bg-white">
+                    {firList.map((fir, index) => (
+                      <tr key={fir.id} className="hover:bg-gray-50">
+                        <td className="px-4 py-3 text-sm">{index + 1}</td>
+                        <td className="px-4 py-3 text-sm font-mono font-semibold text-blue-600">
+                          {fir.fir_number}
+                        </td>
+                        <td className="px-4 py-3 text-sm">{formatDate(fir.incident_date)}</td>
+                        <td className="px-4 py-3 text-sm">{fir.district_name || "-"}</td>
+                        <td className="px-4 py-3 text-sm">{fir.thana_name || "-"}</td>
+                        <td className="px-4 py-3 text-sm">{fir.accused_type || "-"}</td>
+                        <td className="px-4 py-3 text-sm">
+                          {getStatusBadge(fir.case_status)}
+                        </td>
+                        <td className="px-4 py-3 text-sm">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => router.push(`/fir/${fir.id}`)}
+                          >
+                            <Eye className="h-4 w-4 mr-1" />
+                            View
+                          </Button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
-              <p className="text-lg font-semibold mb-2">Start Your Search</p>
-              <p className="text-muted-foreground text-sm max-w-md mx-auto">
-                Enter a mobile number, aadhaar number, or name to search across all records
-              </p>
-              <div className="flex items-center justify-center gap-6 mt-6">
-                <div className="flex items-center gap-2 text-sm">
-                  <div className="w-8 h-8 rounded-lg bg-red-100 flex items-center justify-center">
-                    <User className="h-4 w-4 text-red-600" />
-                  </div>
-                  <span className="text-muted-foreground">Accused</span>
-                </div>
-                <div className="flex items-center gap-2 text-sm">
-                  <div className="w-8 h-8 rounded-lg bg-blue-100 flex items-center justify-center">
-                    <Users className="h-4 w-4 text-blue-600" />
-                  </div>
-                  <span className="text-muted-foreground">Bailers</span>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
+            )}
+          </>
         )}
       </div>
     </div>

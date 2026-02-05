@@ -148,6 +148,7 @@ interface QuickStat {
   icon: any;
   color: string;
   trend?: string;
+  href?: string; // 🆕 Added href for navigation
 }
 
 export default function ReportsPage() {
@@ -256,33 +257,37 @@ export default function ReportsPage() {
 
       setCounts(newCounts);
 
-      // Set quick stats
+      // Set quick stats with navigation hrefs 🆕
       setStats([
         { 
           label: 'Total FIRs', 
           value: newCounts.totalFirs, 
           icon: FileText, 
           color: 'bg-blue-50 border-blue-200 text-blue-700',
-          trend: '+' + newCounts.todayFirs + ' today'
+          trend: '+' + newCounts.todayFirs + ' today',
+          href: '/reports/custom' // Navigate to custom report for all FIRs
         },
         { 
           label: 'Total Accused', 
           value: newCounts.totalAccused, 
           icon: Users, 
-          color: 'bg-red-50 border-red-200 text-red-700'
+          color: 'bg-red-50 border-red-200 text-red-700',
+          href: '/reports/all-accused' // Navigate to all accused report
         },
         { 
           label: 'Total Bailers', 
           value: newCounts.totalBailers, 
           icon: UserCheck, 
-          color: 'bg-green-50 border-green-200 text-green-700'
+          color: 'bg-green-50 border-green-200 text-green-700',
+          href: '/reports/all-bailers' // Navigate to all bailers report
         },
         { 
           label: "This Month's FIRs", 
           value: newCounts.monthlyFirs, 
           icon: Calendar, 
           color: 'bg-purple-50 border-purple-200 text-purple-700',
-          trend: new Date().toLocaleString('default', { month: 'long' })
+          trend: new Date().toLocaleString('default', { month: 'long' }),
+          href: '/reports/monthly' // Navigate to monthly report
         },
       ]);
 
@@ -339,7 +344,7 @@ export default function ReportsPage() {
           </Button>
         </div>
 
-        {/* Quick Stats */}
+        {/* Quick Stats - Made Clickable 🆕 */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           {loading ? (
             Array.from({ length: 4 }).map((_, i) => (
@@ -352,7 +357,11 @@ export default function ReportsPage() {
             ))
           ) : (
             stats.map((stat) => (
-              <Card key={stat.label} className={`border-2 ${stat.color}`}>
+              <Card 
+                key={stat.label} 
+                className={`border-2 ${stat.color} cursor-pointer hover:shadow-lg transition-all transform hover:-translate-y-0.5`}
+                onClick={() => stat.href && router.push(stat.href)} // 🆕 Added onClick
+              >
                 <CardContent className="pt-4">
                   <div className="flex items-center justify-between">
                     <stat.icon className="h-5 w-5 opacity-70" />
@@ -456,7 +465,7 @@ export default function ReportsPage() {
           </CardContent>
         </Card>
 
-        {/* Quick Export Section */}
+        {/* Quick Export Section - Already clickable */}
         <Card className="border-2">
           <CardHeader className="bg-muted/30 border-b pb-4">
             <CardTitle className="text-lg flex items-center gap-2">
@@ -517,9 +526,12 @@ export default function ReportsPage() {
           </CardContent>
         </Card>
 
-        {/* Summary Stats Row */}
+        {/* Summary Stats Row - Made Clickable 🆕 */}
         <div className="grid grid-cols-3 md:grid-cols-6 gap-3">
-          <Card className="border bg-gradient-to-br from-blue-50 to-blue-100">
+          <Card 
+            className="border bg-gradient-to-br from-blue-50 to-blue-100 cursor-pointer hover:shadow-lg transition-all transform hover:-translate-y-0.5"
+            onClick={() => router.push('/reports/custom')} // 🆕 Navigate to custom report for all FIRs
+          >
             <CardContent className="p-4 text-center">
               <FileText className="h-5 w-5 mx-auto text-blue-600 mb-1" />
               <p className="text-xl font-bold text-blue-700">{loading ? '-' : counts.totalFirs.toLocaleString()}</p>
@@ -527,7 +539,10 @@ export default function ReportsPage() {
             </CardContent>
           </Card>
           
-          <Card className="border bg-gradient-to-br from-red-50 to-red-100">
+          <Card 
+            className="border bg-gradient-to-br from-red-50 to-red-100 cursor-pointer hover:shadow-lg transition-all transform hover:-translate-y-0.5"
+            onClick={() => router.push('/reports/all-accused')} // 🆕 Navigate to accused report
+          >
             <CardContent className="p-4 text-center">
               <Users className="h-5 w-5 mx-auto text-red-600 mb-1" />
               <p className="text-xl font-bold text-red-700">{loading ? '-' : counts.totalAccused.toLocaleString()}</p>
@@ -535,7 +550,10 @@ export default function ReportsPage() {
             </CardContent>
           </Card>
           
-          <Card className="border bg-gradient-to-br from-green-50 to-green-100">
+          <Card 
+            className="border bg-gradient-to-br from-green-50 to-green-100 cursor-pointer hover:shadow-lg transition-all transform hover:-translate-y-0.5"
+            onClick={() => router.push('/reports/all-bailers')} // 🆕 Navigate to bailers report
+          >
             <CardContent className="p-4 text-center">
               <UserCheck className="h-5 w-5 mx-auto text-green-600 mb-1" />
               <p className="text-xl font-bold text-green-700">{loading ? '-' : counts.totalBailers.toLocaleString()}</p>
@@ -543,7 +561,10 @@ export default function ReportsPage() {
             </CardContent>
           </Card>
           
-          <Card className="border bg-gradient-to-br from-amber-50 to-amber-100">
+          <Card 
+            className="border bg-gradient-to-br from-amber-50 to-amber-100 cursor-pointer hover:shadow-lg transition-all transform hover:-translate-y-0.5"
+            onClick={() => router.push('/reports/district-wise')} // 🆕 Navigate to district report
+          >
             <CardContent className="p-4 text-center">
               <Building className="h-5 w-5 mx-auto text-amber-600 mb-1" />
               <p className="text-xl font-bold text-amber-700">{loading ? '-' : counts.totalDistricts.toLocaleString()}</p>
@@ -551,7 +572,10 @@ export default function ReportsPage() {
             </CardContent>
           </Card>
           
-          <Card className="border bg-gradient-to-br from-cyan-50 to-cyan-100">
+          <Card 
+            className="border bg-gradient-to-br from-cyan-50 to-cyan-100 cursor-pointer hover:shadow-lg transition-all transform hover:-translate-y-0.5"
+            onClick={() => router.push('/reports/thana-wise')} // 🆕 Navigate to thana report
+          >
             <CardContent className="p-4 text-center">
               <MapPin className="h-5 w-5 mx-auto text-cyan-600 mb-1" />
               <p className="text-xl font-bold text-cyan-700">{loading ? '-' : counts.totalThanas.toLocaleString()}</p>
@@ -559,7 +583,10 @@ export default function ReportsPage() {
             </CardContent>
           </Card>
           
-          <Card className="border bg-gradient-to-br from-rose-50 to-rose-100">
+          <Card 
+            className="border bg-gradient-to-br from-rose-50 to-rose-100 cursor-pointer hover:shadow-lg transition-all transform hover:-translate-y-0.5"
+            onClick={() => router.push('/reports/custody-status')} // 🆕 Navigate to custody report
+          >
             <CardContent className="p-4 text-center">
               <Lock className="h-5 w-5 mx-auto text-rose-600 mb-1" />
               <p className="text-xl font-bold text-rose-700">{loading ? '-' : counts.inCustody.toLocaleString()}</p>

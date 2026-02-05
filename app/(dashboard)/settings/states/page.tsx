@@ -9,7 +9,7 @@ import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
 import {
   MapPin, Plus, Edit, Trash2, RefreshCw, Search,
-  CheckCircle, XCircle, Save, X
+  CheckCircle, XCircle, Save, X, Upload
 } from "lucide-react"
 import { toast } from "sonner"
 
@@ -28,6 +28,7 @@ export default function ManageStatesPage() {
   const [searchQuery, setSearchQuery] = useState("")
   const [showForm, setShowForm] = useState(false)
   const [editingId, setEditingId] = useState<number | null>(null)
+  const [uploading, setUploading] = useState(false) // 🆕
   
   const [formData, setFormData] = useState({
     name: "",
@@ -54,6 +55,72 @@ export default function ManageStatesPage() {
       toast.error("Failed to load states")
     } finally {
       setLoading(false)
+    }
+  }
+
+  // 🆕 CSV Upload Handler
+  const handleCSVUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+
+    if (!file.name.endsWith('.csv')) {
+      toast.error("Please upload a CSV file")
+      return
+    }
+
+    setUploading(true)
+    
+    try {
+      const text = await file.text()
+      const rows = text.split('\n').filter(row => row.trim())
+      const dataRows = rows.slice(1) // Skip header
+      
+      if (dataRows.length === 0) {
+        toast.error("No data found in CSV file")
+        setUploading(false)
+        return
+      }
+
+      const statesData: any[] = []
+      
+      dataRows.forEach((row) => {
+        const columns = row.split(',').map(col => col.trim().replace(/^["']|["']$/g, ''))
+        
+        if (columns.length >= 2) {
+          const [name, code, isActive] = columns
+          
+          if (name && code) {
+            statesData.push({
+              name: name.trim(),
+              code: code.trim().toUpperCase(),
+              is_active: isActive ? (isActive.toLowerCase() === 'true' || isActive === '1' || isActive.toLowerCase() === 'yes') : true
+            })
+          }
+        }
+      })
+
+      if (statesData.length === 0) {
+        toast.error("No valid data to import")
+        setUploading(false)
+        return
+      }
+
+      // Insert data
+      const { error } = await supabase
+        .from("states")
+        .upsert(statesData, { onConflict: 'code' })
+
+      if (error) throw error
+
+      toast.success(`Successfully imported ${statesData.length} state(s)`)
+      loadStates()
+
+    } catch (err: any) {
+      console.error("CSV upload error:", err)
+      toast.error("Failed to process CSV file")
+    } finally {
+      setUploading(false)
+      e.target.value = ''
     }
   }
 
@@ -184,6 +251,21 @@ export default function ManageStatesPage() {
             />
           </div>
           <div className="flex gap-2">
+            {/* 🆕 CSV Upload Button */}
+            <Button variant="outline" disabled={uploading}>
+              <input
+                type="file"
+                accept=".csv"
+                onChange={handleCSVUpload}
+                className="hidden"
+                id="csv-upload"
+              />
+              <label htmlFor="csv-upload" className="cursor-pointer flex items-center">
+                <Upload className={`h-4 w-4 mr-2 ${uploading ? 'animate-spin' : ''}`} />
+                {uploading ? 'Uploading...' : 'Upload CSV'}
+              </label>
+            </Button>
+
             <Button variant="outline" onClick={loadStates} disabled={loading}>
               <RefreshCw className={`h-4 w-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
               Refresh
