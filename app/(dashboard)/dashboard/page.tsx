@@ -71,7 +71,7 @@ export default function DashboardPage() {
   const [topDistricts, setTopDistricts] = useState<{name: string; count: number}[]>([]);
   const [topThanas, setTopThanas] = useState<{name: string; count: number}[]>([]);
   const [recentFirs, setRecentFirs] = useState<any[]>([]);
-  const [caseStatusData, setCaseStatusData] = useState<{status: string; count: number}[]>([]);
+  const [caseStatusData, setCaseStatusData] = useState<{status: string; count: number; name: string}[]>([]);
   const [monthlyTrend, setMonthlyTrend] = useState<{month: string; firs: number; accused: number}[]>([]);
 
   const supabase = createClient();
@@ -694,7 +694,7 @@ export default function DashboardPage() {
             </CardContent>
           </Card>
 
-          {/* Case Status Pie Chart */}
+          {/* Case Status Pie Chart - FIXED */}
           <Card className="border-2">
             <CardHeader className="bg-gray-50 border-b pb-4">
               <CardTitle className="flex items-center gap-2 text-gray-800">
@@ -713,7 +713,7 @@ export default function DashboardPage() {
                       cx="50%"
                       cy="50%"
                       labelLine={false}
-                      label={(entry) => `${entry.name}: ${entry.count}`}
+                      label={({ name, value }) => `${name}: ${value}`}
                       outerRadius={100}
                       fill="#8884d8"
                       dataKey="count"
@@ -1047,7 +1047,7 @@ export default function DashboardPage() {
                 </>
               )}
 
-              {/* Bailed & Custody tables - similar to above */}
+              {/* Bailed & Custody tables */}
               {(modalType === 'bailed' || modalType === 'custody') && (
                 <>
                   {modalData.length === 0 ? (
