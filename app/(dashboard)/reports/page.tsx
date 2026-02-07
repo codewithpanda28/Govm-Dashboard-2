@@ -420,7 +420,7 @@ export default function ReportsPage() {
                         </div>
                         
                         {/* Count Display */}
-                        <div className="text-right">
+                        <div className="text-right mt-4">
                           <div className="flex items-center gap-1 text-2xl font-bold text-primary">
                             <Hash className="h-4 w-4 opacity-50" />
                             {loading ? (
